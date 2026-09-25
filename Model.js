@@ -159,7 +159,8 @@ function card(s) {
       : { label: "Open log", action: "log" }
   } else {
     r.sub = stateLabel(s)
-    r.primary = s.folderOk ? { label: "Start", action: "start" } : { label: "", action: "" }
+    r.primary = foreign(s) ? { label: "Restart", action: "restart" }
+      : s.folderOk ? { label: "Start", action: "start" } : { label: "", action: "" }
   }
   return r
 }
@@ -246,9 +247,11 @@ function moreView(s, ui) {
     acts.push({ label: "Stop", action: "stop", danger: true })
   } else if (!s.installed) {
     acts.push({ label: "Install laya ›", action: "install", primary: true })
+  } else if (foreign(s)) {
+    acts.push({ label: "Restart", action: "restart" })
+    acts.push({ label: "Stop", action: "stop", danger: true })
   } else {
     acts.push({ label: s.folderOk ? "Start ›" : "folder missing", action: s.folderOk ? "start" : "", primary: true })
-    if (foreign(s)) acts.push({ label: "Stop", action: "stop", danger: true })
   }
   v.rows.push({ type: "acts", items: acts })
   return v
