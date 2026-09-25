@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "v3moreno.local-laya",
   "name": "Local Laya",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "v3moreno",
   "license": "MIT",
   "description": "Run the laya decision daemon from a folder, on CPU or GPU, optionally at login — or install laya straight from the widget, then wire its MCP proxy and hooks into your coding agents. The panel shows a lifetime request grid, token graph, per-checkpoint stats, latency and GPU telemetry; start, stop, restart, mode, autostart, agent wiring and updates are a keystroke away.",

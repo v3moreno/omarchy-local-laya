@@ -19,6 +19,13 @@ STATS_FILE="$STATE_DIR/stats.json"
 DEFAULT_FOLDER="$HOME/Projects/local-laya"
 PLUGIN_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
 
+# Dependency pins: each plugin release names the exact daemon packages it was
+# reviewed against, so install/update can never pull newer upstream code than
+# the reviewed commit pairs with. Bump these alongside a plugin release.
+LAYA_SPEC="laya[serve]==0.3.20"
+MCP_SPEC="mcp==2.2.0"
+LAYA_GIT_SHA="4066d5d5fbf08b66c6757ddeedbd797bd7655bc0"
+
 die() { echo "local-laya: $*" >&2; exit 1; }
 
 cfg() { # cfg <path> <default> — missing file/key falls back
@@ -268,9 +275,9 @@ cmd_install() {
     fi
   fi
   if command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$f/.venv/bin/python" "laya[serve]" mcp || die "laya install failed"
+    uv pip install --python "$f/.venv/bin/python" "$LAYA_SPEC" "$MCP_SPEC" || die "laya install failed"
   else
-    "$f/.venv/bin/pip" install --upgrade "laya[serve]" mcp || die "laya install failed"
+    "$f/.venv/bin/pip" install "$LAYA_SPEC" "$MCP_SPEC" || die "laya install failed"
   fi
   sync_tools "$f"
   write_config "$(mode)" "$f" "$(autostart)"
@@ -288,30 +295,31 @@ cmd_agents() {
   (cd "$f" && ./laya-mcp-install "$@") 2>&1 | tee "$STATE_DIR/agents.txt"
 }
 
-# Upgrade the laya package inside the folder's venv. `update` tracks PyPI —
-# `uv sync` when the folder is a uv project, `uv pip`/`pip` when it is a bare
-# venv from `install`; `update git` installs upstream main.
+# Install the pinned laya into the folder's venv. `update` restores the
+# pinned release — `uv sync` when the folder is a uv project, `uv pip`/`pip`
+# when it is a bare venv from `install`; `update git` installs the pinned
+# upstream commit.
 cmd_update() {
   local f; f=$(folder)
   [[ -d $f ]] || die "folder '$f' does not exist — run 'install' first"
   local before; before=$(laya_version "$f")
   if [[ ${1:-} == git ]]; then
     (cd "$f" && uv pip install --python .venv/bin/python \
-      "git+https://github.com/NandhaKishorM/laya") || die "git install failed"
+      "git+https://github.com/NandhaKishorM/laya@$LAYA_GIT_SHA") || die "git install failed"
   elif [[ -f $f/pyproject.toml ]]; then
-    (cd "$f" && uv sync --upgrade-package laya) || die "uv sync failed"
+    (cd "$f" && uv sync) || die "uv sync failed"
   elif command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$f/.venv/bin/python" --upgrade "laya[serve]" || die "upgrade failed"
+    uv pip install --python "$f/.venv/bin/python" "$LAYA_SPEC" || die "upgrade failed"
   else
-    "$f/.venv/bin/pip" install --upgrade "laya[serve]" || die "upgrade failed"
+    "$f/.venv/bin/pip" install "$LAYA_SPEC" || die "upgrade failed"
   fi
   # The MCP proxy needs `mcp` in the venv; project syncs don't pull it in
   # unless the folder declares it. Folders installed before share/ carried
   # the MCP tooling also get the new scripts here.
   if [[ -x $f/.venv/bin/python ]]; then
     "$f/.venv/bin/python" -c 'import mcp' 2>/dev/null \
-      || uv pip install --python "$f/.venv/bin/python" mcp 2>/dev/null \
-      || "$f/.venv/bin/pip" install mcp 2>/dev/null || true
+      || uv pip install --python "$f/.venv/bin/python" "$MCP_SPEC" 2>/dev/null \
+      || "$f/.venv/bin/pip" install "$MCP_SPEC" 2>/dev/null || true
   fi
   sync_tools "$f"
   local after; after=$(laya_version "$f")

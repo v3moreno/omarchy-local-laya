@@ -101,7 +101,7 @@ Config persists at `~/.local/state/omarchy/local-laya/config.json`. A
   costing ~12x latency.
 - `LAYA_FAST=1` — runs each checkpoint on the TileLang fast path
   (`laya[fast]`, GPU only) via an `on_load` hook; needs
-  `uv pip install --python .venv/bin/python "laya[fast]"` in the folder.
+  `uv pip install --python .venv/bin/python "laya[fast]==0.3.20"` in the folder.
 - `LAYA_CPU_AMP=bf16`, `LAYA_MODELS`, `LAYA_AUTO_TASK`, `LAYA_API_KEY` —
   pass through to `laya.serve` unchanged.
 
@@ -114,7 +114,8 @@ qs ipc -n -p "$OMARCHY_PATH/shell" call v3moreno.local-laya menu
 ## Requirements
 
 `systemctl --user`, `curl`, `jq` and `python3` (or `uv`, preferred). The
-daemon itself comes from PyPI's `laya[serve]` — `install` fetches it, so
+daemon itself comes from PyPI's `laya[serve]==0.3.20` (pinned per plugin
+release) — `install` fetches it, so
 no existing checkout is required. An existing folder works too: point
 `folder` at anything containing an executable `laya-serve` that takes
 `cpu`/`gpu` (the [local-laya](https://github.com/v3moreno/local-laya)
