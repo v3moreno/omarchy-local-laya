@@ -220,6 +220,21 @@ function moreView(s, ui) {
       v.rows.push({ type: "field", icon: "weights", label: c, value: models[c] ? models[c] + " req" : "" })
     })
   }
+  // which agents have the MCP proxy + hooks wired — null when the folder
+  // has no MCP tooling (pre-MCP install)
+  var AGENTS = ["claude", "codex", "opencode", "copilot", "hermes", "crush", "pi", "omp"]
+  if (Array.isArray(s.agents)) {
+    v.rows.push({ type: "sec", label: "AGENTS" })
+    v.rows.push({ type: "field", icon: "check", label: "mcp + hooks",
+      value: s.agents.length + " of " + AGENTS.length + " wired",
+      action: "pick|agents", drop: true, open: ui.open === "agents" })
+    if (ui.open === "agents") {
+      v.rows.push({ type: "opt", label: "wire every agent", value: "laya-mcp-install", action: "agents" })
+      AGENTS.forEach(function(a) {
+        v.rows.push({ type: "opt", label: a, on: s.agents.indexOf(a) !== -1, action: "" })
+      })
+    }
+  }
   v.rows.push({ type: "sec", label: "CONTROL" })
   v.rows.push({ type: "field", icon: "mode", label: "mode", value: up(s.mode), action: "pick|mode", drop: true, open: ui.open === "mode" })
   if (ui.open === "mode") ["cpu", "gpu"].forEach(function(m) {

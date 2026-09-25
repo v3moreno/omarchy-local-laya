@@ -3,8 +3,11 @@
 An [Omarchy](https://omarchy.org) plugin that runs the [laya](https://github.com/NandhaKishorM/laya)
 decision daemon — `laya-serve cpu` or `laya-serve gpu` — as a generated
 systemd user unit, with status, stats and lifecycle controls in the bar.
-No laya checkout needed: the widget's **Install laya** bootstraps a venv
-with `laya[serve]` into the configured folder.
+It also wires the daemon into coding agents: an MCP stdio proxy plus
+per-agent hooks let Claude, Codex, OpenCode and friends route decisions
+through your local model. No laya checkout needed: the widget's
+**Install laya** bootstraps a venv with `laya[serve]` + `mcp` into the
+configured folder.
 
 ![Local Laya](preview.png)
 
@@ -20,8 +23,18 @@ with `laya[serve]` into the configured folder.
 - **Installs laya for you**: with no `laya-serve` in the configured folder
   the widget shows an install card (`Install laya ›`), or run
   `omarchy-local-laya install` — it creates a venv, installs `laya[serve]`
-  (uv when present, pip otherwise) and drops the bundled `laya-serve`
-  script in place.
+  and `mcp` (uv when present, pip otherwise) and drops the bundled
+  tooling (`laya-serve`, `serve.py`, `laya-mcp.py`, `laya-gate.py`,
+  `laya-mcp-install`) in place. Existing files are never overwritten,
+  so a real checkout keeps its own copies.
+- **Agent wiring**: the bundled `laya-serve` runs the extended server
+  (`serve.py`, which adds `POST /v1/systemone/batch`), and the
+  `agents` verb runs `laya-mcp-install` — it registers the MCP proxy
+  (`laya_status`, `laya_route`, `laya_filter`, `laya_triage`,
+  `laya_yesno`, `laya_pick`, `laya_decide`) and installs the `laya-gate`
+  hooks where the agent supports them. The More page's **AGENTS**
+  section shows which of Claude, Codex, OpenCode, Copilot, Hermes,
+  Crush, Pi and OMP are wired.
 - **Updates**: `update` upgrades the installed package (`uv sync
   --upgrade-package` for uv projects, `uv pip`/`pip` for bare venvs);
   `update git` tracks upstream `main`.
@@ -64,6 +77,8 @@ omarchy-local-laya autostart on|off
 omarchy-local-laya install             # venv + laya[serve] + laya-serve into the folder
 omarchy-local-laya update              # PyPI: uv sync, uv pip or pip as the folder allows
 omarchy-local-laya update git          # install upstream main instead
+omarchy-local-laya agents              # wire MCP + hooks into every installed agent
+omarchy-local-laya agents claude       # or a subset — output saved to agents.txt
 omarchy-local-laya env                 # show <folder>/laya.env
 omarchy-local-laya env LAYA_THREADS=8  # set a LAYA_* key (restarts if running)
 omarchy-local-laya log

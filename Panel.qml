@@ -105,6 +105,7 @@ Panel {
     case "auto": run(["autostart", a[1]]); break
     case "update": run(a[1] ? ["update", a[1]] : ["update"]); break
     case "install": run(["install"]); break
+    case "agents": run(["agents"]); nav({ open: "" }); break
     case "set": run([a[1], a[2]]); nav({ open: "" }); break
     case "more": nav({ view: "more" }); break
     case "home": home(); break

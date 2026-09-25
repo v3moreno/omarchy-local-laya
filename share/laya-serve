@@ -31,4 +31,4 @@ set -a
 [ -f laya.env ] && . ./laya.env
 set +a
 
-exec .venv/bin/python -m laya.serve
+exec .venv/bin/python -m serve

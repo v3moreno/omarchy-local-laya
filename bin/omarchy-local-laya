@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # omarchy:summary=Run the laya decision daemon from a folder, on CPU or GPU, optionally at login
-# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | env [LAYA_*=v] | log
+# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | agents [agent...] | env [LAYA_*=v] | log
 #
 # Backend of the Local Laya bar widget. Owns a generated systemd user unit
 # (omarchy-local-laya.service) built from three persisted settings — the
@@ -106,6 +106,28 @@ release_port() {
   fi
 }
 
+# Which agents already have laya wired — file checks only, no agent CLIs.
+# Emits a JSON array of agent names, or null when the folder lacks the
+# MCP tooling (an old install before share/ carried it).
+agent_wiring() {
+  local f; f=$(folder)
+  [[ -f $f/laya-mcp.py && -x $f/laya-mcp-install ]] || { echo null; return; }
+  local lai=${OMARCHY_LOCAL_AI_STATE:-$HOME/.local/state/omarchy/local-ai}
+  local list="" a
+  for a in claude codex opencode copilot hermes crush pi omp; do
+    case $a in
+      claude)   jq -e '.mcpServers.laya' "$HOME/.claude.json" >/dev/null 2>&1 ;;
+      codex)    grep -q '^\[mcp_servers\.laya\]' "$HOME/.codex/config.toml" 2>/dev/null ;;
+      opencode) jq -e '.mcp.laya' "$HOME/.config/opencode/opencode.json" >/dev/null 2>&1 ;;
+      copilot)  jq -e '.mcpServers.laya' "$HOME/.copilot/mcp-config.json" >/dev/null 2>&1 ;;
+      hermes)   grep -q laya "$HOME/.hermes/config.yaml" 2>/dev/null ;;
+      crush)    jq -e '.mcp.laya' "$lai/agents/crush/crush/crush.json" >/dev/null 2>&1 ;;
+      pi|omp)   [[ -f $lai/agents/$a/extensions/laya.js ]] ;;
+    esac && list+=",\"$a\""
+  done
+  echo "[${list#,}]"
+}
+
 snapshot() {
   local f m as fok act sub pid enabled since uptime health pn ppid
   f=$(folder); m=$(mode); as=$(autostart)
@@ -169,9 +191,9 @@ snapshot() {
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
     --argjson stats "$stats" --argjson days "$days" --argjson gpu "$gpu" \
     --arg version "$version" --arg layaVersion "$lver" \
-    --argjson envs "$envs" \
+    --argjson envs "$envs" --argjson agents "$(agent_wiring)" \
     '{version: $version, layaVersion: $layaVersion, env: $envs,
-      installed: ($layaVersion != ""),
+      installed: ($layaVersion != ""), agents: $agents,
       folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
@@ -214,8 +236,20 @@ cmd_stop() {
   release_port
 }
 
-# Bootstrap laya into the configured folder: venv + laya[serve] + the
-# laya-serve script this unit expects. `uv` when present, pip otherwise.
+# The tooling the daemon + agents need, shipped in the plugin's share/:
+# the launcher, the extended HTTP server, the MCP stdio proxy, the hook
+# engine, and the per-agent installer. Only files missing from the folder
+# are copied — a real checkout or a user's edits are never clobbered.
+sync_tools() {
+  local f=$1 s
+  for s in laya-serve serve.py laya-mcp.py laya-gate.py laya-mcp-install; do
+    [[ -e $f/$s ]] || install -m755 "$PLUGIN_DIR/share/$s" "$f/$s" || die "could not copy $s into $f"
+  done
+}
+
+# Bootstrap laya into the configured folder: venv + laya[serve] + mcp + the
+# laya-serve script and MCP tooling this unit expects. `uv` when present,
+# pip otherwise.
 cmd_install() {
   local f; f=$(folder)
   mkdir -p "$f"
@@ -227,15 +261,24 @@ cmd_install() {
     fi
   fi
   if command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$f/.venv/bin/python" "laya[serve]" || die "laya install failed"
+    uv pip install --python "$f/.venv/bin/python" "laya[serve]" mcp || die "laya install failed"
   else
-    "$f/.venv/bin/pip" install --upgrade "laya[serve]" || die "laya install failed"
+    "$f/.venv/bin/pip" install --upgrade "laya[serve]" mcp || die "laya install failed"
   fi
-  [[ -x $f/laya-serve ]] || install -m755 "$PLUGIN_DIR/share/laya-serve" "$f/laya-serve"
+  sync_tools "$f"
   write_config "$(mode)" "$f" "$(autostart)"
   write_unit
   local after; after=$(laya_version "$f")
   echo "local-laya: installed laya ${after:-?} into $f"
+}
+
+# Wire the laya MCP proxy + hooks into every installed agent. The folder's
+# laya-mcp-install does the real work (idempotent); its report is kept in
+# agents.txt so the widget can show what ran last.
+cmd_agents() {
+  local f; f=$(folder)
+  [[ -x $f/laya-mcp-install ]] || die "'$f/laya-mcp-install' is missing — run 'install' or sync the tooling"
+  (cd "$f" && ./laya-mcp-install "$@") 2>&1 | tee "$STATE_DIR/agents.txt"
 }
 
 # Upgrade the laya package inside the folder's venv. `update` tracks PyPI —
@@ -255,6 +298,15 @@ cmd_update() {
   else
     "$f/.venv/bin/pip" install --upgrade "laya[serve]" || die "upgrade failed"
   fi
+  # The MCP proxy needs `mcp` in the venv; project syncs don't pull it in
+  # unless the folder declares it. Folders installed before share/ carried
+  # the MCP tooling also get the new scripts here.
+  if [[ -x $f/.venv/bin/python ]]; then
+    "$f/.venv/bin/python" -c 'import mcp' 2>/dev/null \
+      || uv pip install --python "$f/.venv/bin/python" mcp 2>/dev/null \
+      || "$f/.venv/bin/pip" install mcp 2>/dev/null || true
+  fi
+  sync_tools "$f"
   local after; after=$(laya_version "$f")
   echo "local-laya: laya ${before:-?} -> ${after:-?}"
   if [[ $(active) == active ]]; then systemctl --user restart "$UNIT_NAME"; fi
@@ -305,8 +357,9 @@ case "${1:-}" in
   autostart) cmd_autostart "${2:-}" ;;
   update)    cmd_update "${2:-}" ;;
   install)   cmd_install ;;
+  agents)    shift; cmd_agents "$@" ;;
   env)       shift; cmd_env "$@" ;;
   log)       exec omarchy-launch-tui --app-id=org.omarchy.local-laya-log \
                journalctl --user -fu "$UNIT_NAME" ;;
-  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | env [LAYA_*=v] | log" ;;
+  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | agents [agent...] | env [LAYA_*=v] | log" ;;
 esac

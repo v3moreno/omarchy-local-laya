@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# laya-mcp-install — register the laya MCP proxy (and pi extension/hooks where
+# those apply) with every agent. Idempotent; pass agent names to restrict.
+#
+# NOTE: functions run via `install_x || echo` at the bottom, which disables
+# `set -e` inside their bodies — every dangerous op must handle its own
+# failure explicitly with || return.
+set -euo pipefail
+cd "$(dirname "$0")"; HERE=$PWD
+
+PY=$HERE/.venv/bin/python
+SRV=$HERE/laya-mcp.py
+PI_EXT=$HERE/../ask-laya/pi-extension/laya.js
+STATE=${OMARCHY_LOCAL_AI_STATE:-$HOME/.local/state/omarchy/local-ai}
+
+ok()   { printf '  ok %s\n' "$1"; }
+skip() { printf '  -  %s\n' "$1"; }
+bad()  { printf '  !! %s\n' "$1"; }
+
+# jwrite <file> <jq args...> — write jq output via tmp + rename so a jq or IO
+# failure never leaves a truncated config. Caller handles the nonzero return.
+jwrite() {
+  local f=$1; shift
+  command -v jq >/dev/null || { bad "jq not installed"; return 1; }
+  jq "$@" "$f" >"$f.tmp.$$" 2>/dev/null || { rm -f "$f.tmp.$$"; return 1; }
+  mv "$f.tmp.$$" "$f"
+}
+
+install_codex() {
+  local f=$HOME/.codex/config.toml
+  [[ -f $f ]] || { skip "codex: no $f"; return; }
+  grep -q '^\[mcp_servers\.laya\]' "$f" && { skip "codex: already configured"; return; }
+  cat >>"$f" <<EOF || { bad "codex: cannot write $f"; return 1; }
+
+[mcp_servers.laya]
+command = "$PY"
+args = ["$SRV"]
+startup_timeout_sec = 15
+tool_timeout_sec = 60
+EOF
+  ok "codex: $f"
+}
+
+install_claude() {
+  command -v claude >/dev/null || { skip "claude: not installed"; return; }
+  # `claude mcp list` health-checks every server (~40s); check the config file instead
+  jq -e '.mcpServers.laya' "$HOME/.claude.json" >/dev/null 2>&1 || \
+    claude mcp add --scope user laya -- "$PY" "$SRV" >/dev/null 2>&1 || \
+      { bad "claude: mcp add failed"; return 1; }
+  local f=$HOME/.claude/settings.json
+  [[ -f $f ]] || echo '{}' >"$f"
+  # append a laya-gate hook per event only where none exists — never clobber
+  # hooks the user already has
+  jwrite "$f" --arg g "$PY $HERE/laya-gate.py" '
+    def ensure($ev; $matcher; $mode):
+      .hooks[$ev] = (.hooks[$ev] // []) +
+        (if (.hooks[$ev] // []) | map(($matcher == "" or .matcher == $matcher) and
+            ([.hooks[].command] | any(contains("laya-gate")))) | any
+         then []
+         else [({hooks: [{type: "command", command: ($g + " " + $mode)}]}
+                + (if $matcher == "" then {} else {matcher: $matcher} end))]
+         end);
+    .hooks = (.hooks // {})
+    | ensure("PreToolUse"; "Read"; "pretool")
+    | ensure("PreToolUse"; "Bash"; "pretool")
+    | ensure("PreToolUse"; "mcp__laya__.*"; "pretool")
+    | ensure("PostToolUse"; "Read"; "posttool")
+    | ensure("UserPromptSubmit"; ""; "prompt")' \
+    || { bad "claude: $f is not valid JSON — hooks not installed"; return 1; }
+  ok "claude: MCP + hooks in $f"
+}
+
+install_opencode() {
+  local d=$HOME/.config/opencode
+  local f=$d/opencode.json
+  mkdir -p "$d/plugins" || { bad "opencode: cannot create $d"; return 1; }
+  [[ -f $f ]] || echo '{}' >"$f"
+  jq -e '.mcp.laya' "$f" >/dev/null 2>&1 || \
+    jwrite "$f" --arg c "$PY" --arg a "$SRV" \
+      '.mcp.laya={type:"local",command:[$c,$a],enabled:true}' || \
+      { bad "opencode: $f is not valid JSON — MCP not installed"; return 1; }
+  # hard enforcement plugin (tool.execute.before/after -> laya-gate.py)
+  local plug=$HERE/../ask-laya/opencode-plugin/laya.js
+  if [[ -f $plug ]]; then
+    cp -f "$plug" "$d/plugins/laya.js" || { bad "opencode: plugin copy failed"; return 1; }
+    ok "opencode: $f + plugins/laya.js"
+  else
+    ok "opencode: $f (MCP only — $plug missing)"
+  fi
+}
+
+install_crush() {
+  local d=$STATE/agents/crush
+  local f=$d/crush/crush.json
+  mkdir -p "$d/crush" || { bad "crush: cannot create $d/crush"; return 1; }
+  [[ -f $f ]] || echo '{}' >"$f"
+  jq -e '.mcp.laya' "$f" >/dev/null 2>&1 && { skip "crush: already configured"; return; }
+  jwrite "$f" --arg c "$PY" --arg a "$SRV" '.mcp.laya={type:"stdio",command:$c,args:[$a]}' \
+    || { bad "crush: $f is not valid JSON — not installed"; return 1; }
+  ok "crush: $f (re-run after each 'open' if the plugin regenerates crush.json)"
+}
+
+install_grok() {
+  command -v grok >/dev/null || { skip "grok: not installed"; return; }
+  GROK_HOME=$STATE/agents/grok grok mcp add laya "$PY" -- "$SRV" >/dev/null 2>&1 \
+    && ok "grok: $STATE/agents/grok" \
+    || bad "grok: mcp add failed (plugin fork injects it on next 'open' anyway)"
+}
+
+install_copilot() {
+  local d=$HOME/.copilot
+  local f=$d/mcp-config.json
+  mkdir -p "$d" || { bad "copilot: cannot create $d"; return 1; }
+  [[ -f $f ]] || echo '{"mcpServers":{}}' >"$f"
+  jq -e '.mcpServers.laya' "$f" >/dev/null 2>&1 && { skip "copilot: already configured"; return; }
+  jwrite "$f" --arg c "$PY" --arg a "$SRV" '.mcpServers.laya={type:"stdio",command:$c,args:[$a]}' \
+    || { bad "copilot: $f is not valid JSON — not installed"; return 1; }
+  ok "copilot: $f"
+}
+
+install_hermes() {
+  command -v hermes >/dev/null || { skip "hermes: not installed"; return; }
+  hermes mcp list 2>/dev/null | grep -qi laya || \
+    yes | hermes mcp add laya --command "$PY" --args "$SRV" >/dev/null 2>&1 || \
+      { bad "hermes: mcp add failed"; return 1; }
+  # hard enforcement via shell hooks in config.yaml; atomic write via tmp+rename.
+  # exit codes: 0 wrote, 3 already configured, 1 error — set -e is off here so
+  # the nonzero cases fall through to the case below.
+  python3 - "$PY" "$HERE/laya-gate.py" "$HOME/.hermes/config.yaml" <<'PYEOF'
+import os, sys, yaml
+py, gate, f = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    cfg = yaml.safe_load(open(f)) or {}
+except OSError:
+    cfg = {}
+if not isinstance(cfg, dict):
+    raise SystemExit("config.yaml root is not a mapping — not touching it")
+hooks = cfg.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    raise SystemExit("hooks section is not a mapping — not touching it")
+for ev in ("pre_tool_call", "post_tool_call", "pre_llm_call"):
+    v = hooks.setdefault(ev, [])
+    if not isinstance(v, list):
+        raise SystemExit(f"hooks.{ev} is not a list — not touching it")
+before = yaml.dump(hooks, sort_keys=False) + str(cfg.get("hooks_auto_accept"))
+def has(event, cmd):
+    return any(cmd in (h.get("command") or "") for h in hooks[event])
+G = f"{py} {gate}"
+if not has("pre_tool_call", G):
+    hooks["pre_tool_call"] += [
+        {"matcher": "read_file|terminal", "command": f"{G} pretool hermes", "timeout": 20},
+        {"matcher": "laya", "command": f"{G} pretool hermes", "timeout": 10}]
+if not has("post_tool_call", G):
+    hooks["post_tool_call"].append(
+        {"matcher": "read_file", "command": f"{G} posttool hermes", "timeout": 20})
+if not has("pre_llm_call", G):
+    hooks["pre_llm_call"].append({"command": f"{G} prompt hermes", "timeout": 15})
+# only enable auto-accept if the user never set it — don't flip a deliberate False
+cfg.setdefault("hooks_auto_accept", True)
+if yaml.dump(hooks, sort_keys=False) + str(cfg.get("hooks_auto_accept")) == before:
+    raise SystemExit(3)  # nothing added — don't reformat the user's yaml
+tmp = f + ".tmp"
+open(tmp, "w").write(yaml.dump(cfg, sort_keys=False))
+os.replace(tmp, f)
+PYEOF
+  case $? in
+    0) ok "hermes: MCP + hooks in ~/.hermes/config.yaml" ;;
+    3) skip "hermes: hooks already configured" ;;
+    *) bad "hermes: hooks not written (needs pyyaml in system python3)" ;;
+  esac
+}
+
+install_omp() { install_pi "$1"; }
+install_pi() {
+  local a=$1 d=$STATE/agents/$a/extensions
+  [[ -f $PI_EXT ]] || { skip "$a: $PI_EXT missing"; return; }
+  mkdir -p "$d" || { bad "$a: cannot create $d"; return 1; }
+  cp -f "$PI_EXT" "$d/laya.js" || { bad "$a: extension copy failed"; return 1; }
+  ok "$a: $d/laya.js (native extension — $a has no MCP)"
+}
+
+agents=("$@")
+for a in "${agents[@]}"; do
+  declare -F "install_$a" >/dev/null || { echo "unknown agent: $a" >&2; exit 2; }
+done
+wanted() { ((${#agents[@]} == 0)) || printf '%s\n' "${agents[@]}" | grep -qx "$1"; }
+for a in claude codex opencode crush grok copilot hermes pi omp; do
+  wanted "$a" || continue
+  "install_$a" "$a" || true   # failures already reported by bad()
+done
