@@ -166,8 +166,7 @@ Panel {
           dot: root.view.mark !== ""
           dotColor: root.view.mark === "failed" ? root.urgent : root.theme
           dotOpacity: root.view.mark === "busy" ? (root.pulse === 0 ? 1 : 0.25)
-            : root.view.mark === "foreign" ? 0.5
-            : (root.view.mark === "ready" ? 1 : 0.4)
+            : (root.view.mark === "ready" || root.view.mark === "foreign" ? 1 : 0.4)
         }
       }
     }
