@@ -130,17 +130,32 @@ snapshot() {
   days=null
   [[ -f $STATE_DIR/days.json ]] && days=$(cat "$STATE_DIR/days.json" 2>/dev/null || echo null)
   [[ -z $days ]] && days=null
+  # GPU telemetry for the widget's GPUS section (any GPU, either laya mode)
+  gpu=null
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    local gname gused gtot gtemp gutil
+    IFS=',' read -r gname gused gtot gtemp gutil <<< \
+      "$(nvidia-smi --query-gpu=name,memory.used,memory.total,temperature.gpu,utilization.gpu \
+         --format=csv,noheader,nounits 2>/dev/null | head -1)"
+    if [[ -n $gname ]]; then
+      gpu=$(jq -nc --arg n "${gname# }" --argjson u "${gused// /}" --argjson t "${gtot// /}" \
+        --argjson c "${gtemp// /}" --argjson p "${gutil// /}" \
+        '{name: $n, usedMiB: $u, totalMiB: $t, tempC: $c, utilPct: $p}' 2>/dev/null || echo null)
+    fi
+  fi
+  version=$(jq -r '.version // ""' "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
     --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
-    --argjson stats "$stats" --argjson days "$days" \
-    '{version: "1.0.0", folder: $folder, folderOk: $folderOk, mode: $mode,
+    --argjson stats "$stats" --argjson days "$days" --argjson gpu "$gpu" \
+    --arg version "$version" \
+    '{version: $version, folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
       uptime: $uptime, health: $health, stats: $stats, days: $days,
-      running: ($active == "active")}'
+      gpu: $gpu, running: ($active == "active")}'
 }
 
 cmd_mode() {

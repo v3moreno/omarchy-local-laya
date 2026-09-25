@@ -24,6 +24,7 @@ if _PATH:
     _DAYS_PATH = os.path.join(os.path.dirname(_PATH), "days.json")
     _lock = threading.Lock()
     _lat = []
+    _series = []  # cumulative in+out tokens per request — the session graph
     _stats = {
         "started_at": int(time.time()),
         "requests": 0,
@@ -33,6 +34,7 @@ if _PATH:
         "models": {},
         "last_ms": None,
         "latencies": _lat,
+        "series": {"t0": int(time.time()), "t1": int(time.time()), "v": _series},
     }
 
     def _atomic_write(path, payload):
@@ -77,7 +79,12 @@ if _PATH:
                         if len(_lat) > 64:
                             del _lat[:-64]
                     _stats["models"][model] = _stats["models"].get(model, 0) + 1
-                    _atomic_write(_PATH, dict(_stats, latencies=list(_lat)))
+                    _series.append((_series[-1] if _series else 0) + itok + otok)
+                    if len(_series) > 120:
+                        del _series[1::2]  # halve the resolution, keep the shape
+                    _stats["series"]["t1"] = int(time.time())
+                    _atomic_write(_PATH, dict(_stats, latencies=list(_lat),
+                                              series=dict(_stats["series"], v=list(_series))))
 
                     days = _read_json(_DAYS_PATH, {"days": {}})
                     entry = days["days"].setdefault(

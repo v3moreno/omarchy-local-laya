@@ -15,9 +15,15 @@ generated systemd user unit, with status and lifecycle controls in the bar.
   toggle.
 - **Request stats**: the unit puts the plugin's `python/` on `PYTHONPATH`,
   so a `sitecustomize` hook accumulates per-session request count, errors,
-  input/output tokens and latency (last + p50 of the last 64 calls) per
-  checkpoint into `~/.local/state/omarchy/local-laya/stats.json`, which the
-  widget renders in the STATUS section. Counters reset on `start`.
+  input/output tokens, latency (last + p50 of the last 64 calls), a
+  cumulative-token series and per-checkpoint counts into
+  `~/.local/state/omarchy/local-laya/stats.json`, plus a lifetime per-day
+  rollup in `days.json`. Counters reset on `start`; days never do.
+- **The widget** borrows the local-ai layout: a lifetime request grid with
+  month labels and per-day hover, the daemon as a card with its cumulative
+  token line, and a **More** page with the session graph, six figures
+  (avg / p50 / errors / session / week / up), GPU telemetry (nvidia-smi),
+  per-checkpoint request counts, and the mode / autostart / folder controls.
 - If a manually-run `laya-serve` holds the port, the widget shows
   `external · pid N`; `start`/`stop`/`restart` release it (only when the
   listener is actually laya — a foreign service is left alone).
@@ -59,7 +65,7 @@ qs ipc -n -p "$OMARCHY_PATH/shell" call v3moreno.local-laya menu
 ## Requirements
 
 A folder with an executable `laya-serve` script accepting `cpu`/`gpu`
-(the [local-laya](https://github.com/v3moreno/laya) checkout works as-is),
+(the [local-laya](https://github.com/v3moreno/local-laya) checkout works as-is),
 plus `systemctl --user` and `curl`. The daemon's `GET /health` endpoint
 is used unauthenticated on `127.0.0.1`.
 
