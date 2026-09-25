@@ -127,16 +127,19 @@ snapshot() {
   stats=null
   [[ -f $STATS_FILE ]] && stats=$(cat "$STATS_FILE" 2>/dev/null || echo null)
   [[ -z $stats ]] && stats=null
+  days=null
+  [[ -f $STATE_DIR/days.json ]] && days=$(cat "$STATE_DIR/days.json" 2>/dev/null || echo null)
+  [[ -z $days ]] && days=null
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
     --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
-    --argjson stats "$stats" \
+    --argjson stats "$stats" --argjson days "$days" \
     '{version: "1.0.0", folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
-      uptime: $uptime, health: $health, stats: $stats,
+      uptime: $uptime, health: $health, stats: $stats, days: $days,
       running: ($active == "active")}'
 }
 

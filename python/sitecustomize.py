@@ -3,8 +3,12 @@
 Auto-imported by the Python interpreter (site.py) whenever the plugin's
 python/ directory is on PYTHONPATH — the generated systemd unit sets that
 only for the laya.serve process, so nothing else is affected. Registers a
-default on_predict_end hook that appends cumulative counters and a latency
-ring to LAYA_STATS_FILE, read back by the widget's `snapshot`.
+default on_predict_end hook that writes two files next to each other:
+
+  LAYA_STATS_FILE  session counters (tokens, latency ring, per-model counts)
+                   — reset by the backend on every `start`
+  days.json        lifetime per-day rollup {req, tokens in/out, ms sum, err}
+                   keyed by local date — the widget's activity grid
 
 Every code path is wrapped: a stats bug must never fail a decision request.
 """
@@ -17,6 +21,7 @@ import time
 _PATH = os.environ.get("LAYA_STATS_FILE")
 
 if _PATH:
+    _DAYS_PATH = os.path.join(os.path.dirname(_PATH), "days.json")
     _lock = threading.Lock()
     _lat = []
     _stats = {
@@ -30,39 +35,62 @@ if _PATH:
         "latencies": _lat,
     }
 
-    def _write_locked():
-        directory = os.path.dirname(_PATH)
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".stats-")
+    def _atomic_write(path, payload):
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
         try:
             with os.fdopen(fd, "w") as f:
-                json.dump(dict(_stats, latencies=list(_lat)), f)
-            os.replace(tmp, _PATH)
+                json.dump(payload, f)
+            os.replace(tmp, path)
         except BaseException:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
 
+    def _read_json(path, fallback):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except BaseException:
+            return fallback
+
     class _StatsHook:
         def on_predict_end(self, ctx):
             try:
                 with _lock:
-                    _stats["requests"] += 1
-                    if getattr(ctx, "error", None) is not None:
-                        _stats["errors"] += 1
                     usage = getattr(ctx, "usage", None) or {}
-                    _stats["input_tokens"] += int(usage.get("input_tokens") or 0)
-                    _stats["output_tokens"] += int(usage.get("output_tokens") or 0)
+                    itok = int(usage.get("input_tokens") or 0)
+                    otok = int(usage.get("output_tokens") or 0)
                     elapsed = getattr(ctx, "elapsed_ms", None)
-                    if elapsed is not None:
-                        ms = round(float(elapsed), 1)
+                    ms = round(float(elapsed), 1) if elapsed is not None else None
+                    err = getattr(ctx, "error", None) is not None
+                    model = getattr(ctx, "model", None) or "unknown"
+
+                    _stats["requests"] += 1
+                    if err:
+                        _stats["errors"] += 1
+                    _stats["input_tokens"] += itok
+                    _stats["output_tokens"] += otok
+                    if ms is not None:
                         _stats["last_ms"] = ms
                         _lat.append(ms)
                         if len(_lat) > 64:
                             del _lat[:-64]
-                    model = getattr(ctx, "model", None) or "unknown"
                     _stats["models"][model] = _stats["models"].get(model, 0) + 1
-                    _write_locked()
+                    _atomic_write(_PATH, dict(_stats, latencies=list(_lat)))
+
+                    days = _read_json(_DAYS_PATH, {"days": {}})
+                    entry = days["days"].setdefault(
+                        time.strftime("%Y-%m-%d"),
+                        {"r": 0, "in": 0, "out": 0, "ms": 0.0, "err": 0})
+                    entry["r"] += 1
+                    entry["in"] += itok
+                    entry["out"] += otok
+                    if ms is not None:
+                        entry["ms"] += ms
+                    if err:
+                        entry["err"] += 1
+                    _atomic_write(_DAYS_PATH, days)
             except BaseException:
                 pass
 

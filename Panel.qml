@@ -105,6 +105,30 @@ BarWidget {
     return f
   }
 
+  property string gridHover: ""
+
+  // One cell per day: a column a week, a row a weekday — 20 weeks ending
+  // today, like local-ai's lifetime grid. Cell value = tokens that day.
+  function gridCells() {
+    var days = (snap.days && snap.days.days) || {}
+    var now = new Date()
+    var dow = (now.getDay() + 6) % 7  // Monday = 0
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow - 133)
+    var cells = [], max = 0
+    for (var i = 0; i < 140; i++) {
+      var d = new Date(start.getTime() + i * 86400000)
+      var key = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2)
+        + "-" + ("0" + d.getDate()).slice(-2)
+      var e = days[key]
+      var c = { key: key, label: d.toDateString().slice(4, 10),
+        r: e ? (e.r || 0) : 0, v: e ? ((e["in"] || 0) + (e.out || 0)) : 0,
+        ms: e && e.r > 0 ? e.ms / e.r : 0 }
+      if (c.v > max) max = c.v
+      cells.push(c)
+    }
+    return { cells: cells, max: max }
+  }
+
   function menuItems() {
     var items = [{ kind: "sec", label: "STATUS" }]
     items.push({ kind: "info", label: "state",
@@ -116,18 +140,41 @@ BarWidget {
         value: Array.isArray(loaded) ? loaded.length + " loaded" : "—" })
       if (snap.health && snap.health.device)
         items.push({ kind: "info", label: "device", value: snap.health.device })
-      var st = snap.stats
-      if (st && st.requests > 0) {
-        items.push({ kind: "info", label: "requests",
-          value: st.requests + (st.errors ? " · " + st.errors + " err" : "") })
-        items.push({ kind: "info", label: "tokens",
-          value: fmtTokens(st.input_tokens) + " in · " + fmtTokens(st.output_tokens) + " out" })
-        items.push({ kind: "info", label: "latency",
-          value: fmtMs(st.last_ms) + " · p50 " + fmtMs(p50(st.latencies)) })
-      }
+    }
+    var st = snap.stats
+    if (st && st.requests > 0) {
+      items.push({ kind: "info", label: "requests",
+        value: st.requests + (st.errors ? " · " + st.errors + " err" : "") })
+      items.push({ kind: "info", label: "tokens",
+        value: fmtTokens(st.input_tokens) + " in · " + fmtTokens(st.output_tokens) + " out" })
+      items.push({ kind: "info", label: "latency",
+        value: fmtMs(st.last_ms) + " · p50 " + fmtMs(p50(st.latencies)) })
     }
     if (problem !== "")
       items.push({ kind: "empty", label: problem })
+
+    var days = (snap.days && snap.days.days) || {}
+    var keys = Object.keys(days)
+    if (keys.length > 0) {
+      var now = new Date()
+      var todayKey = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2)
+        + "-" + ("0" + now.getDate()).slice(-2)
+      var today = days[todayKey]
+      var req = 0, tok = 0, firstKey = keys.slice().sort()[0]
+      for (var i = 0; i < keys.length; i++) {
+        req += days[keys[i]].r || 0
+        tok += (days[keys[i]]["in"] || 0) + (days[keys[i]].out || 0)
+      }
+      items.push({ kind: "sec", label: "ACTIVITY" })
+      items.push({ kind: "info", label: "today",
+        value: today
+          ? (today.r || 0) + " req · " + fmtTokens((today["in"] || 0) + (today.out || 0)) + " tok"
+          : "none yet" })
+      items.push({ kind: "grid" })
+      items.push({ kind: "info", label: "lifetime",
+        value: gridHover !== "" ? gridHover
+          : fmtTokens(req) + " req · " + fmtTokens(tok) + " tok · " + firstKey.slice(5) })
+    }
 
     items.push({ kind: "sec", label: "CONTROL" })
     items.push({ kind: "option", id: "mode", label: "mode",
@@ -205,6 +252,16 @@ BarWidget {
       else runVerb([item.id])
       break
     }
+  }
+
+  readonly property var grid: gridCells()
+  readonly property int gridCell: 9
+  readonly property int gridGap: 3
+  readonly property int gridH: 7 * gridCell + 6 * gridGap
+
+  function cellText(c) {
+    if (!c || c.r === 0) return ""
+    return c.label + " · " + c.r + " req · " + fmtTokens(c.v) + " tok"
   }
 
   function collapseOrClose() {
@@ -310,11 +367,13 @@ BarWidget {
             required property var modelData
             required property int index
             readonly property var item: modelData
+            readonly property bool isGrid: item.kind === "grid"
             readonly property bool isRow: item.kind !== "sec"
             readonly property bool actionable: root.isActionable(item)
             readonly property bool cursor: actionable && root.menuCursor === index
             width: menuRows.width
-            height: isRow ? root.menuRowH
+            height: isGrid ? root.gridH + Style.space(8)
+              : isRow ? root.menuRowH
               : (index === 0 ? 0 : root.menuGroupGap) + root.menuHeadH
 
             Text {
@@ -328,8 +387,40 @@ BarWidget {
               font.bold: true
             }
 
+            Grid {
+              visible: parent.isGrid
+              x: root.menuGutter
+              anchors.verticalCenter: parent.verticalCenter
+              columns: 20
+              rows: 7
+              flow: Grid.TopToBottom
+              columnSpacing: root.gridGap
+              rowSpacing: root.gridGap
+
+              Repeater {
+                model: 140
+                Rectangle {
+                  required property int index
+                  readonly property var cell: root.grid.cells[index]
+                  width: root.gridCell
+                  height: root.gridCell
+                  radius: 2
+                  color: cell && cell.v > 0
+                    ? Util.alpha(root.menuInk,
+                        0.2 + 0.8 * Math.sqrt(cell.v / Math.max(root.grid.max, 1)))
+                    : root.menuSurface
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onEntered: root.gridHover = root.cellText(parent.cell)
+                    onExited: root.gridHover = ""
+                  }
+                }
+              }
+            }
+
             Rectangle {
-              visible: parent.isRow && parent.actionable
+              visible: parent.isRow && !parent.isGrid && parent.actionable
               x: root.menuEdge
               width: parent.width - 2 * root.menuEdge
               height: root.menuRowH
@@ -339,7 +430,7 @@ BarWidget {
 
             Text {
               id: chevronLabel
-              visible: parent.isRow && !!parent.item.chevron
+              visible: parent.isRow && !parent.isGrid && !!parent.item.chevron
               anchors.right: parent.right
               anchors.rightMargin: root.menuGutter
               anchors.verticalCenter: parent.verticalCenter
@@ -351,7 +442,7 @@ BarWidget {
 
             Text {
               id: valueLabel
-              visible: parent.isRow && !!parent.item.value
+              visible: parent.isRow && !parent.isGrid && !!parent.item.value
               anchors.right: chevronLabel.visible ? chevronLabel.left : parent.right
               anchors.rightMargin: chevronLabel.visible ? Style.space(8) : root.menuGutter
               anchors.verticalCenter: parent.verticalCenter
@@ -365,7 +456,7 @@ BarWidget {
             }
 
             Text {
-              visible: parent.isRow
+              visible: parent.isRow && !parent.isGrid
               x: root.menuGutter + (parent.item.kind === "choice" ? root.menuSlot : 0)
               width: (valueLabel.visible ? valueLabel.x - Style.space(8)
                 : (chevronLabel.visible ? chevronLabel.x - Style.space(8)
