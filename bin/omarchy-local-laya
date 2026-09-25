@@ -14,7 +14,9 @@ UNIT_NAME="omarchy-local-laya.service"
 UNIT="$HOME/.config/systemd/user/$UNIT_NAME"
 STATE_DIR="$HOME/.local/state/omarchy/local-laya"
 CONFIG="$STATE_DIR/config.json"
+STATS_FILE="$STATE_DIR/stats.json"
 DEFAULT_FOLDER="$HOME/Projects/local-laya"
+PLUGIN_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
 
 die() { echo "local-laya: $*" >&2; exit 1; }
 
@@ -58,6 +60,8 @@ After=default.target
 [Service]
 Type=simple
 WorkingDirectory=$f
+Environment=PYTHONPATH=$PLUGIN_DIR/python
+Environment=LAYA_STATS_FILE=$STATS_FILE
 ExecStart=$f/laya-serve $m
 Restart=on-failure
 RestartSec=3
@@ -120,15 +124,20 @@ snapshot() {
     health=$(curl -fsS -m 2 "http://127.0.0.1:$port/health" 2>/dev/null || echo null)
     [[ -z $health ]] && health=null
   fi
+  stats=null
+  [[ -f $STATS_FILE ]] && stats=$(cat "$STATS_FILE" 2>/dev/null || echo null)
+  [[ -z $stats ]] && stats=null
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
     --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
+    --argjson stats "$stats" \
     '{version: "1.0.0", folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
-      uptime: $uptime, health: $health, running: ($active == "active")}'
+      uptime: $uptime, health: $health, stats: $stats,
+      running: ($active == "active")}'
 }
 
 cmd_mode() {
@@ -157,6 +166,7 @@ cmd_autostart() {
 cmd_start() {
   write_unit  # also validates the folder
   release_port
+  rm -f "$STATS_FILE"  # fresh session counters
   systemctl --user start "$UNIT_NAME"
 }
 

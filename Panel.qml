@@ -78,6 +78,25 @@ BarWidget {
     return "stopped"
   }
 
+  function fmtTokens(n) {
+    n = n || 0
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M"
+    if (n >= 1000) return (n / 1000).toFixed(1) + "k"
+    return String(n)
+  }
+
+  function fmtMs(ms) {
+    if (ms === null || ms === undefined) return "—"
+    if (ms >= 1000) return (ms / 1000).toFixed(1) + "s"
+    return Math.round(ms) + "ms"
+  }
+
+  function p50(latencies) {
+    if (!Array.isArray(latencies) || latencies.length === 0) return null
+    var s = latencies.slice().sort(function(a, b) { return a - b })
+    return s[Math.floor((s.length - 1) / 2)]
+  }
+
   function shortFolder() {
     var f = snap.folder || ""
     if (f === "") return "—"
@@ -97,6 +116,15 @@ BarWidget {
         value: Array.isArray(loaded) ? loaded.length + " loaded" : "—" })
       if (snap.health && snap.health.device)
         items.push({ kind: "info", label: "device", value: snap.health.device })
+      var st = snap.stats
+      if (st && st.requests > 0) {
+        items.push({ kind: "info", label: "requests",
+          value: st.requests + (st.errors ? " · " + st.errors + " err" : "") })
+        items.push({ kind: "info", label: "tokens",
+          value: fmtTokens(st.input_tokens) + " in · " + fmtTokens(st.output_tokens) + " out" })
+        items.push({ kind: "info", label: "latency",
+          value: fmtMs(st.last_ms) + " · p50 " + fmtMs(p50(st.latencies)) })
+      }
     }
     if (problem !== "")
       items.push({ kind: "empty", label: problem })
