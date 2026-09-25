@@ -1,4 +1,4 @@
-# Local Laya
+# Local Laya for Omarchy
 
 An [Omarchy](https://omarchy.org) plugin that runs the [laya](https://github.com/NandhaKishorM/laya)
 decision daemon — `laya-serve cpu` or `laya-serve gpu` — as a generated
