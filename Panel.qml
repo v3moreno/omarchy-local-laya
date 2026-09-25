@@ -116,10 +116,13 @@ BarWidget {
     if (!snap.folderOk) {
       items.push({ kind: "empty",
         label: "set folder: omarchy-local-laya folder <path>" })
-    } else {
-      items.push({ kind: "action", id: "start", label: "start", chevron: "›" })
+    } else if (running) {
       items.push({ kind: "action", id: "stop", label: "stop" })
       items.push({ kind: "action", id: "restart", label: "restart" })
+    } else {
+      items.push({ kind: "action", id: "start", label: "start", chevron: "›" })
+      if (snap.foreign && snap.portPid > 0)
+        items.push({ kind: "action", id: "stop", label: "stop" })
     }
 
     items.push({ kind: "info", label: "folder", value: shortFolder() })
