@@ -75,8 +75,29 @@ EOF
 
 active() { systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true; }
 
+# PID listening on a TCP port (empty when free or owned by another user).
+port_pid() { ss -H -tlnp "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1; }
+
+is_laya_pid() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'laya'; }
+
+# Kill a laya process squatting on our port (e.g. a manually-run laya-serve).
+# Refuses to touch non-laya listeners so a foreign service is never killed.
+release_port() {
+  local pid; pid=$(port_pid "$(port)")
+  [[ -n $pid ]] || return 0
+  if is_laya_pid "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      sleep 0.5
+      if [[ -z $(port_pid "$(port)") ]]; then break; fi
+    done
+  else
+    die "port $(port) is held by non-laya process $pid"
+  fi
+}
+
 snapshot() {
-  local f m as p fok act sub pid enabled since uptime health port
+  local f m as fok act sub pid enabled since uptime health port ppid
   f=$(folder); m=$(mode); as=$(autostart)
   fok=false; [[ -d $f && -x $f/laya-serve ]] && fok=true
   act=$(active); sub=$(systemctl --user show "$UNIT_NAME" -p SubState --value 2>/dev/null || true)
@@ -91,8 +112,11 @@ snapshot() {
     (( uptime < 0 )) && uptime=0
   fi
   port=$(port)
+  ppid=$(port_pid "$port"); ppid=${ppid:-0}
+  foreign=false
+  [[ $ppid != 0 && $ppid != "$pid" ]] && foreign=true
   health=null
-  if [[ $act == active ]]; then
+  if [[ $act == active || $ppid != 0 ]]; then
     health=$(curl -fsS -m 2 "http://127.0.0.1:$port/health" 2>/dev/null || echo null)
     [[ -z $health ]] && health=null
   fi
@@ -100,11 +124,11 @@ snapshot() {
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
     --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
-    --argjson health "$health" \
+    --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
     '{version: "1.0.0", folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
-      enabled: $enabled, port: $port, uptime: $uptime, health: $health,
-      running: ($active == "active")}'
+      enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
+      uptime: $uptime, health: $health, running: ($active == "active")}'
 }
 
 cmd_mode() {
@@ -132,14 +156,20 @@ cmd_autostart() {
 
 cmd_start() {
   write_unit  # also validates the folder
+  release_port
   systemctl --user start "$UNIT_NAME"
+}
+
+cmd_stop() {
+  systemctl --user stop "$UNIT_NAME" || true
+  release_port
 }
 
 case "${1:-}" in
   snapshot)  snapshot ;;
   start)     cmd_start ;;
-  stop)      systemctl --user stop "$UNIT_NAME" ;;
-  restart)   write_unit; systemctl --user restart "$UNIT_NAME" ;;
+  stop)      cmd_stop ;;
+  restart)   write_unit; release_port; systemctl --user restart "$UNIT_NAME" ;;
   mode)      cmd_mode "${2:-}" ;;
   folder)    cmd_folder "${2:-}" ;;
   autostart) cmd_autostart "${2:-}" ;;

@@ -43,7 +43,7 @@ BarWidget {
   readonly property color menuInk: Color.popups.text
   readonly property color menuValue: Util.alpha(Color.popups.text, 0.72)
   readonly property color menuLabel: Util.alpha(Color.popups.text, 0.48)
-  readonly property color menuDanger: Style.color.danger
+  readonly property color menuDanger: bar && bar.urgent ? bar.urgent : Color.urgent
   readonly property color menuSurface: Util.alpha(Color.popups.text, 0.07)
   readonly property int menuGutter: Style.space(18)
   readonly property int menuEdge: Style.space(8)
@@ -68,6 +68,8 @@ BarWidget {
     if (snap.active === "failed") return "failed"
     if (snap.active === "activating") return "starting…"
     if (snap.active === "deactivating") return "stopping…"
+    if (snap.foreign && snap.portPid > 0)
+      return "external · pid " + snap.portPid
     if (snap.running) {
       var s = "running · " + (snap.mode || "cpu")
       if (snap.uptime > 0) s += " · " + fmtDuration(snap.uptime)
@@ -88,7 +90,7 @@ BarWidget {
     var items = [{ kind: "sec", label: "STATUS" }]
     items.push({ kind: "info", label: "state",
       value: stateLabel(), danger: failed })
-    if (running) {
+    if (running || snap.health) {
       items.push({ kind: "info", label: "port", value: "127.0.0.1:" + snap.port })
       var loaded = snap.health && snap.health.loaded
       items.push({ kind: "info", label: "checkpoints",
@@ -114,9 +116,8 @@ BarWidget {
     if (!snap.folderOk) {
       items.push({ kind: "empty",
         label: "set folder: omarchy-local-laya folder <path>" })
-    } else if (!running) {
-      items.push({ kind: "action", id: "start", label: "start", chevron: "›" })
     } else {
+      items.push({ kind: "action", id: "start", label: "start", chevron: "›" })
       items.push({ kind: "action", id: "stop", label: "stop" })
       items.push({ kind: "action", id: "restart", label: "restart" })
     }
