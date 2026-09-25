@@ -10,9 +10,8 @@ BarWidget {
   id: root
   moduleName: "v3moreno.local-laya"
 
-  required property var pluginApi
-
-  readonly property string cli: pluginApi ? pluginApi.pluginDir + "/bin/omarchy-local-laya" : ""
+  readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-local-laya"))
+    .replace(/^file:\/\//, "")
 
   property var snap: ({})
   property string problem: ""
@@ -326,7 +325,8 @@ BarWidget {
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(implicitWidth, parent.width * 0.45)
               text: parent.item.value || ""
-              color: parent.item.danger ? root.menuDanger : root.menuValue
+              color: parent.item && parent.item.danger === true
+                ? root.menuDanger : root.menuValue
               font.family: root.menuFont
               font.pixelSize: Style.font.body
               elide: Text.ElideRight
