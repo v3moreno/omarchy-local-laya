@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "v3moreno.local-laya",
+  "name": "Local Laya",
+  "version": "1.0.0",
+  "author": "v3moreno",
+  "license": "MIT",
+  "description": "Run the laya decision daemon from a folder, on CPU or GPU, optionally at login. The widget shows state, port, loaded checkpoints and device; start, stop, restart, mode and autostart are a keystroke away.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Local Laya",
+    "description": "Start laya-serve from a folder at login; status and lifecycle in the bar.",
+    "category": "AI",
+    "aliases": [
+      "laya",
+      "local-laya",
+      "decisions"
+    ],
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}

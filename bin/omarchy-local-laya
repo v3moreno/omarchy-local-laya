@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# omarchy:summary=Run the laya decision daemon from a folder, on CPU or GPU, optionally at login
+# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | log
+#
+# The backend behind the Local Laya bar widget. It owns a generated systemd
+# user unit (omarchy-local-laya.service) built from two persisted settings —
+# the folder that contains a `laya-serve` script, and the mode (cpu | gpu) —
+# plus an autostart flag that enables the unit for the user session.
+# `snapshot` joins that config with `systemctl show` and a /health probe and
+# prints what the widget draws; every other verb rewrites the unit and acts.
+set -euo pipefail
+
+UNIT_NAME="omarchy-local-laya.service"
+UNIT="$HOME/.config/systemd/user/$UNIT_NAME"
+STATE_DIR="$HOME/.local/state/omarchy/local-laya"
+CONFIG="$STATE_DIR/config.json"
+DEFAULT_FOLDER="$HOME/Projects/local-laya"
+
+die() { echo "local-laya: $*" >&2; exit 1; }
+
+cfg() { # cfg <path> <default> — missing file/key falls back
+  if [[ -f $CONFIG ]]; then
+    jq -er "$1 // empty" "$CONFIG" 2>/dev/null && return
+  fi
+  printf '%s\n' "$2"
+}
+
+mode() { local m; m=$(cfg .mode cpu); [[ $m == gpu ]] && echo gpu || echo cpu; }
+folder() { cfg .folder "$DEFAULT_FOLDER"; }
+autostart() { cfg .autostart false; }
+port_for() { [[ $1 == gpu ]] && echo 8124 || echo 8123; }
+
+# LAYA_PORT in the folder's laya.env overrides the per-mode default.
+port() {
+  local f; f=$(folder)
+  local p
+  p=$(sed -n 's/^ *LAYA_PORT *= *\([0-9][0-9]*\).*/\1/p' "$f/laya.env" 2>/dev/null | head -1)
+  if [[ -n $p ]]; then echo "$p"; else port_for "$(mode)"; fi
+}
+
+write_config() { # write_config <mode> <folder> <autostart>
+  mkdir -p "$STATE_DIR"
+  jq -nc --arg mode "$1" --arg folder "$2" --argjson autostart "$3" \
+    '{mode: $mode, folder: $folder, autostart: $autostart}' > "$CONFIG"
+}
+
+write_unit() { # Regenerate the unit from current config; returns its path.
+  local f m as
+  f=$(folder); m=$(mode); as=$(autostart)
+  [[ -d $f ]] || die "folder '$f' does not exist"
+  [[ -x $f/laya-serve ]] || die "'$f/laya-serve' is missing or not executable"
+  mkdir -p "$HOME/.config/systemd/user"
+  cat > "$UNIT" <<EOF
+[Unit]
+Description=Laya decision daemon (omarchy-local-laya)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=$f
+ExecStart=$f/laya-serve $m
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  if [[ $as == true ]]; then
+    systemctl --user enable "$UNIT_NAME" >/dev/null 2>&1 || true
+  else
+    systemctl --user disable "$UNIT_NAME" >/dev/null 2>&1 || true
+  fi
+}
+
+active() { systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true; }
+
+snapshot() {
+  local f m as p fok act sub pid enabled since uptime health port
+  f=$(folder); m=$(mode); as=$(autostart)
+  fok=false; [[ -d $f && -x $f/laya-serve ]] && fok=true
+  act=$(active); sub=$(systemctl --user show "$UNIT_NAME" -p SubState --value 2>/dev/null || true)
+  pid=$(systemctl --user show "$UNIT_NAME" -p MainPID --value 2>/dev/null || true)
+  enabled=$(systemctl --user is-enabled "$UNIT_NAME" 2>/dev/null || true)
+  [[ -z $enabled ]] && enabled=missing
+  [[ -z $pid || $pid == "0" ]] && pid=0
+  since=$(systemctl --user show "$UNIT_NAME" -p ActiveEnterTimestampMonotonic --value 2>/dev/null || true)
+  uptime=0
+  if [[ -n $since && $since != 0 ]]; then
+    uptime=$(awk -v s="$since" '{printf "%d", $1 - s/1000000}' /proc/uptime 2>/dev/null || echo 0)
+    (( uptime < 0 )) && uptime=0
+  fi
+  port=$(port)
+  health=null
+  if [[ $act == active ]]; then
+    health=$(curl -fsS -m 2 "http://127.0.0.1:$port/health" 2>/dev/null || echo null)
+    [[ -z $health ]] && health=null
+  fi
+  jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
+    --arg active "${act:-inactive}" --arg enabled "$enabled" \
+    --argjson autostart "$as" --argjson folderOk "$fok" \
+    --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
+    --argjson health "$health" \
+    '{version: "1.0.0", folder: $folder, folderOk: $folderOk, mode: $mode,
+      autostart: $autostart, active: $active, sub: $sub, pid: $pid,
+      enabled: $enabled, port: $port, uptime: $uptime, health: $health,
+      running: ($active == "active")}'
+}
+
+cmd_mode() {
+  [[ ${1:-} == cpu || ${1:-} == gpu ]] || die "mode cpu|gpu"
+  write_config "$1" "$(folder)" "$(autostart)"
+  write_unit
+  if [[ $(active) == active ]]; then systemctl --user restart "$UNIT_NAME"; fi
+}
+
+cmd_folder() {
+  [[ -n ${1:-} ]] || die "folder <path>"
+  local f; f=$(realpath -e "$1" 2>/dev/null) || die "'$1' does not exist"
+  [[ -x $f/laya-serve ]] || die "'$f/laya-serve' is missing or not executable"
+  write_config "$(mode)" "$f" "$(autostart)"
+  write_unit
+  if [[ $(active) == active ]]; then systemctl --user restart "$UNIT_NAME"; fi
+}
+
+cmd_autostart() {
+  [[ ${1:-} == on || ${1:-} == off ]] || die "autostart on|off"
+  local as=false; [[ $1 == on ]] && as=true
+  write_config "$(mode)" "$(folder)" "$as"
+  write_unit  # applies enable/disable
+}
+
+cmd_start() {
+  write_unit  # also validates the folder
+  systemctl --user start "$UNIT_NAME"
+}
+
+case "${1:-}" in
+  snapshot)  snapshot ;;
+  start)     cmd_start ;;
+  stop)      systemctl --user stop "$UNIT_NAME" ;;
+  restart)   write_unit; systemctl --user restart "$UNIT_NAME" ;;
+  mode)      cmd_mode "${2:-}" ;;
+  folder)    cmd_folder "${2:-}" ;;
+  autostart) cmd_autostart "${2:-}" ;;
+  log)       exec omarchy-launch-tui --app-id=org.omarchy.local-laya-log \
+               journalctl --user -fu "$UNIT_NAME" ;;
+  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | log" ;;
+esac
