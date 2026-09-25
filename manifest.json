@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "v3moreno.local-laya",
   "name": "Local Laya",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "v3moreno",
   "license": "MIT",
-  "description": "Run the laya decision daemon from a folder, on CPU or GPU, optionally at login. The widget shows state, port, loaded checkpoints and device; start, stop, restart, mode and autostart are a keystroke away.",
+  "description": "Run the laya decision daemon from a folder, on CPU or GPU, optionally at login — or install laya straight from the widget. The panel shows a lifetime request grid, token graph, per-checkpoint stats, latency and GPU telemetry; start, stop, restart, mode, autostart and updates are a keystroke away.",
   "kinds": [
     "bar-widget"
   ],

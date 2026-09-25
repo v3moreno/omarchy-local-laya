@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # omarchy:summary=Run the laya decision daemon from a folder, on CPU or GPU, optionally at login
-# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | log
+# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | env [LAYA_*=v] | log
 #
-# The backend behind the Local Laya bar widget. It owns a generated systemd
-# user unit (omarchy-local-laya.service) built from two persisted settings —
-# the folder that contains a `laya-serve` script, and the mode (cpu | gpu) —
-# plus an autostart flag that enables the unit for the user session.
-# `snapshot` joins that config with `systemctl show` and a /health probe and
-# prints what the widget draws; every other verb rewrites the unit and acts.
+# Backend of the Local Laya bar widget. Owns a generated systemd user unit
+# (omarchy-local-laya.service) built from three persisted settings — the
+# folder holding a `laya-serve` script, the mode (cpu | gpu), and an
+# autostart flag that enables the unit for the user session. `snapshot`
+# joins that config with `systemctl show`, a /health probe, the stats hook's
+# files and GPU telemetry into the JSON the widget draws; every other verb
+# rewrites the unit and acts on it.
 set -euo pipefail
 
 UNIT_NAME="omarchy-local-laya.service"
@@ -106,7 +107,7 @@ release_port() {
 }
 
 snapshot() {
-  local f m as fok act sub pid enabled since uptime health port ppid
+  local f m as fok act sub pid enabled since uptime health pn ppid
   f=$(folder); m=$(mode); as=$(autostart)
   fok=false; [[ -d $f && -x $f/laya-serve ]] && fok=true
   act=$(active); sub=$(systemctl --user show "$UNIT_NAME" -p SubState --value 2>/dev/null || true)
@@ -120,13 +121,13 @@ snapshot() {
     uptime=$(awk -v s="$since" '{printf "%d", $1 - s/1000000}' /proc/uptime 2>/dev/null || echo 0)
     (( uptime < 0 )) && uptime=0
   fi
-  port=$(port)
-  ppid=$(port_pid "$port"); ppid=${ppid:-0}
+  pn=$(port)
+  ppid=$(port_pid "$pn"); ppid=${ppid:-0}
   foreign=false
   [[ $ppid != 0 && $ppid != "$pid" ]] && foreign=true
   health=null
   if [[ $act == active || $ppid != 0 ]]; then
-    health=$(curl -fsS -m 2 "http://127.0.0.1:$port/health" 2>/dev/null || echo null)
+    health=$(curl -fsS -m 2 "http://127.0.0.1:$pn/health" 2>/dev/null || echo null)
     [[ -z $health ]] && health=null
   fi
   stats=null
@@ -164,7 +165,7 @@ snapshot() {
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
-    --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
+    --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$pn" \
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
     --argjson stats "$stats" --argjson days "$days" --argjson gpu "$gpu" \
     --arg version "$version" --arg layaVersion "$lver" \
@@ -233,7 +234,8 @@ cmd_install() {
   [[ -x $f/laya-serve ]] || install -m755 "$PLUGIN_DIR/share/laya-serve" "$f/laya-serve"
   write_config "$(mode)" "$f" "$(autostart)"
   write_unit
-  echo "local-laya: installed laya ${lver:-$(laya_version "$f")} into $f"
+  local after; after=$(laya_version "$f")
+  echo "local-laya: installed laya ${after:-?} into $f"
 }
 
 # Upgrade the laya package inside the folder's venv. `update` tracks PyPI —

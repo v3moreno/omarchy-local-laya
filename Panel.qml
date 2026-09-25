@@ -140,8 +140,8 @@ Panel {
   }
   onOpenedChanged: if (opened) { refresh(); if (!ui.problem) home() }
 
-  // The mark: a ring that is faint while laya is down and lit when it is serving; the core dot pulses while a
-  // mode switch is spinning up, shows urgent on a failed unit, and sits dim while a foreign laya holds the port.
+  // The mark: a ring that is faint while laya is down and lit while anything serves the port — ours or a
+  // foreign laya; the core dot pulses while a mode switch is spinning up and turns urgent on a failed unit.
   property real pulse: 0
   Timer {
     interval: 400; repeat: true; running: root.view.mark === "busy"

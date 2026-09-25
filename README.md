@@ -1,8 +1,12 @@
 # Local Laya
 
-An [Omarchy](https://omarchy.org) plugin that runs the [laya](https://github.com/v3moreno/laya)
-decision daemon from a folder — `laya-serve cpu` or `laya-serve gpu` — as a
-generated systemd user unit, with status and lifecycle controls in the bar.
+An [Omarchy](https://omarchy.org) plugin that runs the [laya](https://github.com/NandhaKishorM/laya)
+decision daemon — `laya-serve cpu` or `laya-serve gpu` — as a generated
+systemd user unit, with status, stats and lifecycle controls in the bar.
+No laya checkout needed: the widget's **Install laya** bootstraps a venv
+with `laya[serve]` into the configured folder.
+
+![Local Laya](preview.png)
 
 ## What it does
 
@@ -57,7 +61,8 @@ omarchy-local-laya start | stop | restart
 omarchy-local-laya mode cpu            # or gpu — restarts if running
 omarchy-local-laya folder ~/code/laya  # must contain an executable laya-serve
 omarchy-local-laya autostart on|off
-omarchy-local-laya update              # uv sync --upgrade-package laya (PyPI)
+omarchy-local-laya install             # venv + laya[serve] + laya-serve into the folder
+omarchy-local-laya update              # PyPI: uv sync, uv pip or pip as the folder allows
 omarchy-local-laya update git          # install upstream main instead
 omarchy-local-laya env                 # show <folder>/laya.env
 omarchy-local-laya env LAYA_THREADS=8  # set a LAYA_* key (restarts if running)
@@ -93,10 +98,25 @@ qs ipc -n -p "$OMARCHY_PATH/shell" call v3moreno.local-laya menu
 
 ## Requirements
 
-A folder with an executable `laya-serve` script accepting `cpu`/`gpu`
-(the [local-laya](https://github.com/v3moreno/local-laya) checkout works as-is),
-plus `systemctl --user` and `curl`. The daemon's `GET /health` endpoint
-is used unauthenticated on `127.0.0.1`.
+`systemctl --user`, `curl`, `jq` and `python3` (or `uv`, preferred). The
+daemon itself comes from PyPI's `laya[serve]` — `install` fetches it, so
+no existing checkout is required. An existing folder works too: point
+`folder` at anything containing an executable `laya-serve` that takes
+`cpu`/`gpu` (the [local-laya](https://github.com/v3moreno/local-laya)
+checkout works as-is). The daemon's `GET /health` is used unauthenticated
+on `127.0.0.1`.
+
+## Uninstall
+
+```sh
+omarchy-local-laya stop
+systemctl --user disable omarchy-local-laya.service
+omarchy plugin remove v3moreno.local-laya
+```
+
+The generated unit (`~/.config/systemd/user/omarchy-local-laya.service`),
+state (`~/.local/state/omarchy/local-laya/`) and the laya folder itself
+can then be deleted safely.
 
 ## License
 
