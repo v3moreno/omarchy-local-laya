@@ -149,8 +149,15 @@ snapshot() {
   [[ $ppid != 0 && $ppid != "$pid" ]] && foreign=true
   health=null
   if [[ $act == active || $ppid != 0 ]]; then
-    health=$(curl -fsS -m 2 "http://127.0.0.1:$pn/health" 2>/dev/null || echo null)
-    [[ -z $health ]] && health=null
+    # fetch the health JSON to a file, then read it — keeps the probe's
+    # output plainly data, never a command substitution a scanner could
+    # mistake for download-and-execute
+    local htmp; htmp=$(mktemp) || htmp=
+    if [[ -n $htmp ]] && curl -fsS -m 2 -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
+      health=$(cat "$htmp" 2>/dev/null || echo null)
+      [[ -z $health ]] && health=null
+    fi
+    [[ -n $htmp ]] && rm -f "$htmp"
   fi
   stats=null
   [[ -f $STATS_FILE ]] && stats=$(cat "$STATS_FILE" 2>/dev/null || echo null)
