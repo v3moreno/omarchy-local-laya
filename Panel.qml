@@ -626,10 +626,13 @@ Panel {
       border.color: ring
     }
     Rectangle {
-      anchors.centerIn: parent
-      width: parent.width * 0.42
-      height: width
-      radius: width / 2
+      // the dot keeps the ring's parity, so (width - d) / 2 is a whole pixel and it centers exactly
+      property int d: Math.round(parent.width * 0.4) | (Math.round(parent.width) % 2)
+      x: (parent.width - d) / 2
+      y: (parent.height - d) / 2
+      width: d
+      height: d
+      radius: d / 2
       visible: dot
       color: dotColor
       opacity: dotOpacity
