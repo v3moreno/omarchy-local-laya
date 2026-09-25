@@ -82,7 +82,12 @@ active() { systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true; }
 # PID listening on a TCP port (empty when free or owned by another user).
 port_pid() { ss -H -tlnp "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true; }
 
-is_laya_pid() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'laya'; }
+# A pid counts as ours when its cmdline mentions laya, or it runs from the configured laya folder
+# (a `python -m serve` launched there names no laya in its argv).
+is_laya_pid() {
+  tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'laya' && return 0
+  [[ $(readlink "/proc/$1/cwd" 2>/dev/null) == "$(folder)" ]]
+}
 
 # Kill a laya process squatting on our port (e.g. a manually-run laya-serve).
 # Refuses to touch non-laya listeners so a foreign service is never killed.
