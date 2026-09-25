@@ -71,7 +71,7 @@ BarWidget {
     if (snap.foreign && snap.portPid > 0)
       return "external · pid " + snap.portPid
     if (snap.running) {
-      var s = "running · " + (snap.mode || "cpu")
+      var s = snap.mode || "cpu"
       if (snap.uptime > 0) s += " · " + fmtDuration(snap.uptime)
       return s
     }
@@ -324,7 +324,7 @@ BarWidget {
               anchors.right: chevronLabel.visible ? chevronLabel.left : parent.right
               anchors.rightMargin: chevronLabel.visible ? Style.space(8) : root.menuGutter
               anchors.verticalCenter: parent.verticalCenter
-              width: Math.min(implicitWidth, parent.width * 0.45)
+              width: Math.min(implicitWidth, parent.width * 0.6)
               text: parent.item.value || ""
               color: parent.item && parent.item.danger === true
                 ? root.menuDanger : root.menuValue
