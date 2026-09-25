@@ -161,10 +161,12 @@ Panel {
           ring: root.view.mark === "failed" ? root.urgent
             : root.view.mark === "ready" ? root.theme
             : root.view.mark === "busy" ? Util.alpha(root.theme, 0.55)
+            : root.view.mark === "foreign" ? Util.alpha(root.theme, 0.4)
             : Util.alpha(root.theme, 0.3)
           dot: root.view.mark !== ""
           dotColor: root.view.mark === "failed" ? root.urgent : root.theme
           dotOpacity: root.view.mark === "busy" ? (root.pulse === 0 ? 1 : 0.25)
+            : root.view.mark === "foreign" ? 0.5
             : (root.view.mark === "ready" ? 1 : 0.4)
         }
       }

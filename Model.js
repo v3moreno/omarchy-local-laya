@@ -66,10 +66,11 @@ function running(s) { return s.running === true }
 function busy(s) { return s.active === "activating" || s.active === "deactivating" }
 function foreign(s) { return s.foreign === true && s.portPid > 0 }
 
-// the bar mark: failed, busy, ready or idle (a foreign laya on the port reads as busy)
+// the bar mark: failed, busy, ready, foreign or idle
 function mark(s) {
+  if (foreign(s)) return "foreign"
   if (s.active === "failed") return "failed"
-  if (busy(s) || foreign(s)) return "busy"
+  if (busy(s)) return "busy"
   return running(s) ? "ready" : ""
 }
 
