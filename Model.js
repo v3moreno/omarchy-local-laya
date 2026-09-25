@@ -148,7 +148,7 @@ function card(s) {
   var r = { type: "run", name: "Laya", family: "laya", line: series.v || [], more: "more",
     version: s.layaVersion || "",
     gpu: up(s.mode) + " mode · :" + s.port,
-    mem: Array.isArray(h.loaded) ? h.loaded.length + " checkpoints · " + up(h.device || "?") : "" }
+    mem: Array.isArray(h.loaded) ? h.loaded.length + " checkpoints" : "" }
   if (running(s) || busy(s)) {
     r.chips = [{ icon: "speed", text: ms(p50(st.latencies)) + " p50" },
       { icon: "tokens", text: "Σ " + k((st.input_tokens || 0) + (st.output_tokens || 0)) }].filter(function(c) { return !!c.text })
@@ -167,9 +167,11 @@ function card(s) {
 // answer, the control rows (mode, autostart, folder), where it answers, and its actions
 function moreView(s, ui) {
   var st = stats(s), h = health(s), series = st.series || {}
+  var dev = (h.device || "").toUpperCase()
+  if (dev === "CUDA") dev = "GPU"
   var facts = [
     { icon: "machine", text: up(s.mode) + " · :" + s.port },
-    { icon: "gpu", text: up(h.device || "") },
+    dev !== up(s.mode) ? { icon: "gpu", text: dev } : null,
     Array.isArray(h.loaded) ? { icon: "weights", text: h.loaded.length + " checkpoints" } : null,
     s.layaVersion ? { icon: "version", text: "laya " + s.layaVersion } : null,
     s.autostart ? { icon: "check", text: "autostart" } : null
