@@ -6,16 +6,21 @@ import qs.Ui
 
 // Display-only: every lifecycle action is a call into bin/omarchy-local-laya,
 // which owns the generated systemd user unit and the persisted config.
-BarWidget {
+Panel {
   id: root
   moduleName: "v3moreno.local-laya"
+  ipcTarget: "v3moreno.local-laya"
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   readonly property string cli: String(Qt.resolvedUrl("bin/omarchy-local-laya"))
     .replace(/^file:\/\//, "")
+  readonly property color theme: bar ? bar.foreground : Color.foreground
+  readonly property color bg: Color.popups.background
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
 
   property var snap: ({})
   property string problem: ""
-  property bool menuOpen: false
   property int menuCursor: 0
   property string expanded: ""
 
@@ -23,17 +28,9 @@ BarWidget {
   readonly property bool busy: snap.active === "activating" || snap.active === "deactivating" || verb.running
   readonly property bool failed: snap.active === "failed"
 
+  onOpenedChanged: if (opened) { menuCursor = 0; expanded = ""; refresh() }
+
   function refresh() { if (cli !== "" && !poll.running) poll.running = true }
-
-  function open() {
-    menuCursor = 0
-    expanded = ""
-    refresh()
-    menuOpen = true
-  }
-
-  function close() { menuOpen = false }
-  function toggle() { if (menuOpen) close(); else open() }
 
   // ---- menu model ----
   // Same flat layout as omarchy-local-ai / omarchy-modes.switcher: one
@@ -269,15 +266,6 @@ BarWidget {
     else close()
   }
 
-  implicitWidth: triggerRow.implicitWidth
-  implicitHeight: triggerRow.implicitHeight
-
-  IpcHandler {
-    target: "v3moreno.local-laya"
-    function menu(): string { root.toggle(); return "toggled" }
-    function refresh(): string { root.refresh(); return "ok" }
-  }
-
   Process {
     id: poll
     command: [root.cli, "snapshot"]
@@ -306,42 +294,57 @@ BarWidget {
 
   Timer {
     id: pollTimer
-    interval: root.busy ? 1500 : (root.menuOpen ? 3000 : 10000)
+    interval: root.busy ? 1500 : (root.opened ? 3000 : 10000)
     onTriggered: root.refresh()
   }
 
-  Row {
-    id: triggerRow
+  // The mark: a ring that is faint while laya is down and lit when it is
+  // serving; the core dot pulses while a mode switch is spinning up, shows
+  // urgent on a failed unit, and sits dim while a foreign laya holds the port.
+  property real pulse: 0
+  Timer {
+    interval: 400; repeat: true; running: root.busy
+    onTriggered: root.pulse = (root.pulse + 1) % 2
+  }
+  BarIconButton {
+    id: button
     anchors.fill: parent
-    spacing: Style.space(1)
-
-    BarIconButton {
-      id: layaButton
-      bar: root.bar
-      text: "⚡"
-      tooltipText: "Local Laya — " + root.stateLabel()
-      active: root.menuOpen
-      onPressed: root.toggle()
-    }
-
-    WidgetButton {
-      id: layaLabel
-      bar: root.bar
-      text: "laya" + (root.running ? " " + (root.snap.mode || "cpu")
-        : (root.failed ? " err" : "")) + " 󰅂"
-      tooltipText: layaButton.tooltipText
-      horizontalMargin: Style.spaceReal(3)
-      active: root.menuOpen
-      onPressed: root.toggle()
+    bar: root.bar
+    tooltipText: "Local Laya — " + root.stateLabel()
+    onPressed: root.toggle()
+    iconComponent: Component {
+      Item {
+        readonly property color ring: root.failed ? root.urgent
+          : root.running ? root.theme
+          : root.busy || (root.snap.foreign && root.snap.portPid > 0)
+            ? Util.alpha(root.theme, 0.55)
+            : Util.alpha(root.theme, 0.3)
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(11); height: width; radius: width / 2
+          color: "transparent"
+          border.width: 2
+          border.color: ring
+        }
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(5); height: width; radius: width / 2
+          visible: root.running || root.busy || root.failed
+            || (root.snap.foreign && root.snap.portPid > 0)
+          color: root.failed ? root.urgent : root.theme
+          opacity: root.busy ? (root.pulse === 0 ? 1 : 0.25)
+            : (root.running ? 1 : 0.4)
+        }
+      }
     }
   }
 
   KeyboardPanel {
     id: layaMenu
-    anchorItem: layaButton
+    anchorItem: button
     owner: root
     bar: root.bar
-    open: root.menuOpen
+    open: root.opened
     focusTarget: menuKeys
     contentWidth: layaMenu.fittedContentWidth(Style.space(300))
     contentHeight: layaMenu.fittedContentHeight(menuRows.implicitHeight)
