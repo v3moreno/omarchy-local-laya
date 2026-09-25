@@ -13,6 +13,14 @@ generated systemd user unit, with status and lifecycle controls in the bar.
   (polled from `GET /health`), and offers **start / stop / restart**,
   a **cpu / gpu mode** switch (restarts the daemon), and an **autostart**
   toggle.
+- **Installs laya for you**: with no `laya-serve` in the configured folder
+  the widget shows an install card (`Install laya ›`), or run
+  `omarchy-local-laya install` — it creates a venv, installs `laya[serve]`
+  (uv when present, pip otherwise) and drops the bundled `laya-serve`
+  script in place.
+- **Updates**: `update` upgrades the installed package (`uv sync
+  --upgrade-package` for uv projects, `uv pip`/`pip` for bare venvs);
+  `update git` tracks upstream `main`.
 - **Request stats**: the unit puts the plugin's `python/` on `PYTHONPATH`,
   so a `sitecustomize` hook accumulates per-session request count, errors,
   input/output tokens, latency (last + p50 of the last 64 calls), a

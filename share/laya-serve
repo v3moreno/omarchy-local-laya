@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Laya decision daemon — serves POST /v1/systemone on 127.0.0.1:8123.
+#
+#   ./laya-serve cpu    CPU inference on :8123 (safe alongside any GPU model)
+#   ./laya-serve gpu    CUDA inference on :8124 (~20 ms/decision; co-locates
+#                       with the 2B model at cache_size <= 131072 on a 6 GB card)
+#
+# Optional laya.env in this directory can set LAYA_API_KEY (bearer auth),
+# LAYA_PORT, LAYA_THREADS, LAYA_MODELS.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+MODE="${1:-}"
+case "$MODE" in
+  cpu)
+    export LAYA_DEVICE=cpu LAYA_PRELOAD=1
+    export LAYA_THREADS="${LAYA_THREADS:-8}" LAYA_PORT="${LAYA_PORT:-8123}"
+    ;;
+  gpu)
+    export LAYA_DEVICE=cuda LAYA_PRELOAD=0 LAYA_PORT="${LAYA_PORT:-8124}"
+    ;;
+  *)
+    echo "usage: $0 {cpu|gpu}" >&2
+    exit 2
+    ;;
+esac
+
+export LAYA_HOST="${LAYA_HOST:-127.0.0.1}"
+
+set -a
+[ -f laya.env ] && . ./laya.env
+set +a
+
+exec .venv/bin/python -m laya.serve

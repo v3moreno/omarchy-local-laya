@@ -104,6 +104,7 @@ Panel {
     case "mode": run(["mode", a[1]]); nav({ open: "" }); break
     case "auto": run(["autostart", a[1]]); break
     case "update": run(a[1] ? ["update", a[1]] : ["update"]); break
+    case "install": run(["install"]); break
     case "set": run([a[1], a[2]]); nav({ open: "" }); break
     case "more": nav({ view: "more" }); break
     case "home": home(); break
@@ -256,7 +257,7 @@ Panel {
                 x: inset
                 y: parent.gap
                 width: parent.width - 2 * inset
-                sourceComponent: ({ life: lifeC, run: runC, grid: gridC, gpu: gpuC,
+                sourceComponent: ({ life: lifeC, run: runC, soon: soonC, grid: gridC, gpu: gpuC,
                   field: fieldC, opt: optC, path: pathC, acts: linksC, links: linksC })[r.type] || textC
               }
 
@@ -394,6 +395,63 @@ Panel {
                     }
                     Btn { label: "More"; action: r.more }
                   }
+                }
+              }
+
+              // Nothing installed yet: a square wave drifting left, one line, and the install button
+              Component {
+                id: soonC
+                Column {
+                  topPadding: Style.space(28)
+                  bottomPadding: Style.space(20)
+                  spacing: Style.space(18)
+                  Item {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Style.space(140)
+                    height: Style.space(18)
+                    clip: true
+                    Timer {
+                      interval: 50
+                      repeat: true
+                      running: root.opened
+                      onTriggered: wave.x = (wave.x - wave.period * interval / 2400) % wave.period
+                    }
+                    Row {
+                      id: wave
+                      readonly property real period: Style.space(28)
+                      readonly property real stroke: 1.5
+                      Repeater {
+                        model: Math.ceil(Style.space(140) / wave.period) + 1
+                        Item {
+                          width: wave.period
+                          height: Style.space(18)
+                          Rectangle { x: -wave.stroke / 2; y: 2 - wave.stroke / 2; width: wave.stroke; height: parent.height - 4 + wave.stroke; color: root.labelTone }
+                          Rectangle { y: 2 - wave.stroke / 2; width: wave.period / 2; height: wave.stroke; color: root.labelTone }
+                          Rectangle { x: wave.period / 2 - wave.stroke / 2; width: wave.stroke; height: parent.height - 4 + wave.stroke; color: root.labelTone }
+                          Rectangle { x: wave.period / 2; y: parent.height - 2 - wave.stroke / 2; width: wave.stroke; height: wave.stroke; color: root.labelTone }
+                        }
+                      }
+                    }
+                    Rectangle {
+                      width: parent.width / 4
+                      height: parent.height
+                      gradient: Gradient { orientation: Gradient.Horizontal; GradientStop { position: 0; color: root.bg } GradientStop { position: 1; color: "transparent" } }
+                    }
+                    Rectangle {
+                      x: parent.width * 3 / 4
+                      width: parent.width
+                      height: parent.height
+                      gradient: Gradient { orientation: Gradient.Horizontal; GradientStop { position: 0; color: "transparent" } GradientStop { position: 1; color: root.bg } }
+                    }
+                  }
+                  Label {
+                    x: root.gutter
+                    width: parent.width - 2 * root.gutter
+                    horizontalAlignment: Text.AlignHCenter
+                    text: r.head
+                    wrapMode: Text.WordWrap
+                  }
+                  Btn { anchors.horizontalCenter: parent.horizontalCenter; label: r.button || "Install ›"; action: r.action }
                 }
               }
 
@@ -707,7 +765,14 @@ Panel {
       Row {
         spacing: Style.space(8)
         Mark { size: 8; anchors.verticalCenter: parent.verticalCenter; ring: root.ink; dot: root.view.mark === "ready"; dotColor: root.ink }
-        Label { text: h.name; color: root.ink; font.pixelSize: Style.font.body }
+        Label { id: heroName; text: h.name; color: root.ink; font.pixelSize: Style.font.body }
+        Label {
+          visible: !!h.version
+          anchors.baseline: heroName.baseline
+          text: h.version || ""
+          color: Util.alpha(root.labelTone, 0.55)
+          font.pixelSize: Style.font.caption - 2
+        }
       }
       Chips { width: parent.width; items: h.chips || []; tone: root.valueTone }
       Label { visible: !!h.sub; text: h.sub || ""; color: root.labelTone }

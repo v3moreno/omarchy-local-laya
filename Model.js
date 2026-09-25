@@ -172,7 +172,7 @@ function moreView(s, ui) {
     s.layaVersion ? { icon: "version", text: "laya " + s.layaVersion } : null,
     s.autostart ? { icon: "check", text: "autostart" } : null
   ].filter(function(c) { return c && c.text !== "" })
-  var v = { back: true, rows: [], hero: { name: "laya", family: "laya", chips: facts, sub: stateLabel(s) } }
+  var v = { back: true, rows: [], hero: { name: "laya", family: "laya", chips: facts, sub: stateLabel(s), version: s.layaVersion || "" } }
   var line = series.v || []
   if (line.length > 1) {
     var top = line[line.length - 1]
@@ -239,6 +239,8 @@ function moreView(s, ui) {
   if (running(s) || busy(s)) {
     acts.push({ label: "Restart", action: "restart" })
     acts.push({ label: "Stop", action: "stop", danger: true })
+  } else if (!s.installed) {
+    acts.push({ label: "Install laya ›", action: "install", primary: true })
   } else {
     acts.push({ label: s.folderOk ? "Start ›" : "folder missing", action: s.folderOk ? "start" : "", primary: true })
     if (foreign(s)) acts.push({ label: "Stop", action: "stop", danger: true })
@@ -247,11 +249,19 @@ function moreView(s, ui) {
   return v
 }
 
+// nothing to serve: a square wave, one line, and the install button
+function soonView(s) {
+  var f = home(s.folder || "")
+  return { type: "soon",
+    head: (s.folderOk ? "No laya install in " : "No laya folder at ") + f + " yet",
+    action: "install", button: "Install laya ›" }
+}
+
 function homeView(s, ui) {
   var rows = ui.problem ? [{ type: "error", label: ui.problem }] : []
   var act = activity(s)
   if (act) rows.push(act)
-  rows.push(card(s))
+  rows.push(s.installed ? card(s) : soonView(s))
   return { title: "LOCAL LAYA", version: (s.layaVersion ? "laya " + s.layaVersion : s.version) || "", rows: rows }
 }
 

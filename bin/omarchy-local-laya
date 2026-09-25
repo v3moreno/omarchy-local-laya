@@ -165,6 +165,7 @@ snapshot() {
     --arg version "$version" --arg layaVersion "$lver" \
     --argjson envs "$envs" \
     '{version: $version, layaVersion: $layaVersion, env: $envs,
+      installed: ($layaVersion != ""),
       folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
@@ -207,17 +208,45 @@ cmd_stop() {
   release_port
 }
 
-# Upgrade the laya package inside the folder's venv. `update` tracks PyPI via
-# uv; `update git` installs upstream main.
+# Bootstrap laya into the configured folder: venv + laya[serve] + the
+# laya-serve script this unit expects. `uv` when present, pip otherwise.
+cmd_install() {
+  local f; f=$(folder)
+  mkdir -p "$f"
+  if [[ ! -x $f/.venv/bin/python ]]; then
+    if command -v uv >/dev/null 2>&1; then
+      (cd "$f" && uv venv .venv) || die "venv creation failed"
+    else
+      python3 -m venv "$f/.venv" || die "venv creation failed"
+    fi
+  fi
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$f/.venv/bin/python" "laya[serve]" || die "laya install failed"
+  else
+    "$f/.venv/bin/pip" install --upgrade "laya[serve]" || die "laya install failed"
+  fi
+  [[ -x $f/laya-serve ]] || install -m755 "$PLUGIN_DIR/share/laya-serve" "$f/laya-serve"
+  write_config "$(mode)" "$f" "$(autostart)"
+  write_unit
+  echo "local-laya: installed laya ${lver:-$(laya_version "$f")} into $f"
+}
+
+# Upgrade the laya package inside the folder's venv. `update` tracks PyPI —
+# `uv sync` when the folder is a uv project, `uv pip`/`pip` when it is a bare
+# venv from `install`; `update git` installs upstream main.
 cmd_update() {
   local f; f=$(folder)
-  [[ -d $f ]] || die "folder '$f' does not exist"
+  [[ -d $f ]] || die "folder '$f' does not exist — run 'install' first"
   local before; before=$(laya_version "$f")
   if [[ ${1:-} == git ]]; then
     (cd "$f" && uv pip install --python .venv/bin/python \
       "git+https://github.com/NandhaKishorM/laya") || die "git install failed"
-  else
+  elif [[ -f $f/pyproject.toml ]]; then
     (cd "$f" && uv sync --upgrade-package laya) || die "uv sync failed"
+  elif command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$f/.venv/bin/python" --upgrade "laya[serve]" || die "upgrade failed"
+  else
+    "$f/.venv/bin/pip" install --upgrade "laya[serve]" || die "upgrade failed"
   fi
   local after; after=$(laya_version "$f")
   echo "local-laya: laya ${before:-?} -> ${after:-?}"
@@ -268,8 +297,9 @@ case "${1:-}" in
   folder)    cmd_folder "${2:-}" ;;
   autostart) cmd_autostart "${2:-}" ;;
   update)    cmd_update "${2:-}" ;;
+  install)   cmd_install ;;
   env)       shift; cmd_env "$@" ;;
   log)       exec omarchy-launch-tui --app-id=org.omarchy.local-laya-log \
                journalctl --user -fu "$UNIT_NAME" ;;
-  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | update [git] | env [LAYA_*=v] | log" ;;
+  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | env [LAYA_*=v] | log" ;;
 esac
