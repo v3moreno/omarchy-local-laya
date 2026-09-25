@@ -49,12 +49,33 @@ omarchy-local-laya start | stop | restart
 omarchy-local-laya mode cpu            # or gpu — restarts if running
 omarchy-local-laya folder ~/code/laya  # must contain an executable laya-serve
 omarchy-local-laya autostart on|off
+omarchy-local-laya update              # uv sync --upgrade-package laya (PyPI)
+omarchy-local-laya update git          # install upstream main instead
+omarchy-local-laya env                 # show <folder>/laya.env
+omarchy-local-laya env LAYA_THREADS=8  # set a LAYA_* key (restarts if running)
 omarchy-local-laya log
 ```
 
 Config persists at `~/.local/state/omarchy/local-laya/config.json`. A
 `LAYA_PORT` in the folder's `laya.env` overrides the per-mode port
 (8123 cpu / 8124 gpu) used for the health probe.
+
+## Tuning
+
+`laya-serve` sources `<folder>/laya.env`, so any `LAYA_*` variable applies
+(`env` verb edits it):
+
+- `LAYA_THREADS` — torch intra-op threads for CPU inference; keep at or
+  under physical cores (default here: 8).
+- `LAYA_INTEROP=0` — disables the plugin's `torch.set_num_interop_threads(1)`
+  pin. The pin is on by default because laya serves one forward pass per
+  call, where upstream's own benchmarks measured idle inter-op parallelism
+  costing ~12x latency.
+- `LAYA_FAST=1` — runs each checkpoint on the TileLang fast path
+  (`laya[fast]`, GPU only) via an `on_load` hook; needs
+  `uv pip install --python .venv/bin/python "laya[fast]"` in the folder.
+- `LAYA_CPU_AMP=bf16`, `LAYA_MODELS`, `LAYA_AUTO_TASK`, `LAYA_API_KEY` —
+  pass through to `laya.serve` unchanged.
 
 IPC:
 

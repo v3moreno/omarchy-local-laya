@@ -144,14 +144,28 @@ snapshot() {
     fi
   fi
   version=$(jq -r '.version // ""' "$PLUGIN_DIR/manifest.json" 2>/dev/null || true)
+  # installed laya package version, read from dist-info (no python spawn)
+  local lver=""
+  local meta; meta=$(find "$f/.venv/lib" -maxdepth 4 -name "METADATA" -path "*laya-*.dist-info*" 2>/dev/null | head -1)
+  [[ -n $meta ]] && lver=$(sed -n 's/^Version: *//p' "$meta" | head -1)
+  # effective laya.env tuning, as a JSON map the widget can show
+  local envs="{}"
+  if [[ -f $f/laya.env ]]; then
+    envs=$(sed -n 's/^ *\(LAYA_[A-Z_]*\) *=\(.*\)/\1\t\2/p' "$f/laya.env" 2>/dev/null \
+      | jq -Rn '[inputs | split("\t") | {key: (.[0] | sub(" *$"; "")), value: .[1]}]
+                | from_entries' 2>/dev/null || echo '{}')
+    [[ -z $envs || $envs == null ]] && envs="{}"
+  fi
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
     --arg active "${act:-inactive}" --arg enabled "$enabled" \
     --argjson autostart "$as" --argjson folderOk "$fok" \
     --argjson pid "$pid" --argjson uptime "$uptime" --argjson port "$port" \
     --argjson health "$health" --argjson portPid "$ppid" --argjson foreign "$foreign" \
     --argjson stats "$stats" --argjson days "$days" --argjson gpu "$gpu" \
-    --arg version "$version" \
-    '{version: $version, folder: $folder, folderOk: $folderOk, mode: $mode,
+    --arg version "$version" --arg layaVersion "$lver" \
+    --argjson envs "$envs" \
+    '{version: $version, layaVersion: $layaVersion, env: $envs,
+      folder: $folder, folderOk: $folderOk, mode: $mode,
       autostart: $autostart, active: $active, sub: $sub, pid: $pid,
       enabled: $enabled, port: $port, portPid: $portPid, foreign: $foreign,
       uptime: $uptime, health: $health, stats: $stats, days: $days,
@@ -193,6 +207,58 @@ cmd_stop() {
   release_port
 }
 
+# Upgrade the laya package inside the folder's venv. `update` tracks PyPI via
+# uv; `update git` installs upstream main.
+cmd_update() {
+  local f; f=$(folder)
+  [[ -d $f ]] || die "folder '$f' does not exist"
+  local before; before=$(laya_version "$f")
+  if [[ ${1:-} == git ]]; then
+    (cd "$f" && uv pip install --python .venv/bin/python \
+      "git+https://github.com/NandhaKishorM/laya") || die "git install failed"
+  else
+    (cd "$f" && uv sync --upgrade-package laya) || die "uv sync failed"
+  fi
+  local after; after=$(laya_version "$f")
+  echo "local-laya: laya ${before:-?} -> ${after:-?}"
+  if [[ $(active) == active ]]; then systemctl --user restart "$UNIT_NAME"; fi
+}
+
+# laya version from the folder's venv metadata — no python spawn
+laya_version() {
+  local meta; meta=$(find "$1/.venv/lib" -maxdepth 4 -name "METADATA" \
+    -path "*laya-*.dist-info*" 2>/dev/null | head -1)
+  [[ -n $meta ]] && sed -n 's/^Version: *//p' "$meta" | head -1
+}
+
+# get/set a LAYA_* key in <folder>/laya.env
+cmd_env() {
+  local f; f=$(folder)
+  local envf="$f/laya.env"
+  if [[ -z ${1:-} ]]; then
+    [[ -f $envf ]] && cat "$envf" || true
+    return 0
+  fi
+  if [[ $1 == *=* ]]; then
+    local key="${1%%=*}" val="${1#*=}"
+    [[ $key =~ ^LAYA_[A-Z_]+$ ]] || die "env key must be LAYA_*"
+    touch "$envf"
+    if grep -q "^ *${key}=" "$envf"; then
+      sed -i "s|^ *${key}=.*|${key}=${val}|" "$envf"
+    else
+      echo "${key}=${val}" >> "$envf"
+    fi
+    echo "local-laya: $key=$val (applies on next start)"
+    if [[ $(active) == active ]]; then
+      echo "local-laya: restarting to apply"
+      systemctl --user restart "$UNIT_NAME"
+    fi
+    return 0
+  fi
+  # bare key: print current value
+  grep -oP "^ *${1}=\K.*" "$envf" 2>/dev/null || true
+}
+
 case "${1:-}" in
   snapshot)  snapshot ;;
   start)     cmd_start ;;
@@ -201,7 +267,9 @@ case "${1:-}" in
   mode)      cmd_mode "${2:-}" ;;
   folder)    cmd_folder "${2:-}" ;;
   autostart) cmd_autostart "${2:-}" ;;
+  update)    cmd_update "${2:-}" ;;
+  env)       shift; cmd_env "$@" ;;
   log)       exec omarchy-launch-tui --app-id=org.omarchy.local-laya-log \
                journalctl --user -fu "$UNIT_NAME" ;;
-  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | log" ;;
+  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | update [git] | env [LAYA_*=v] | log" ;;
 esac

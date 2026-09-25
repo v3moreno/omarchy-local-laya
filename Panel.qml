@@ -25,7 +25,7 @@ Panel {
   // Nerd Font glyphs for the icon names Model.js uses
   readonly property var glyphs: ({ gpu: 0xf08ae, memory: 0xf035b, temp: 0xf050f, weights: 0xf01a7,
     speed: 0xf140c, tokens: 0xf04a0, folder: 0xf0256, machine: 0xf0379, check: 0xf012c,
-    down: 0xf0140, mode: 0xf0668 })
+    down: 0xf0140, mode: 0xf0668, version: 0xf02d4, tune: 0xf066c })
   function glyph(name) { return glyphs[name] ? String.fromCodePoint(glyphs[name]) : "" }
 
   // Four tones, each picked by the APCA contrast it must reach on a card (Model.tones): ink for what matters
@@ -103,6 +103,7 @@ Panel {
     case "start": case "stop": case "restart": run([a[0]]); break
     case "mode": run(["mode", a[1]]); nav({ open: "" }); break
     case "auto": run(["autostart", a[1]]); break
+    case "update": run(a[1] ? ["update", a[1]] : ["update"]); break
     case "set": run([a[1], a[2]]); nav({ open: "" }); break
     case "more": nav({ view: "more" }); break
     case "home": home(); break

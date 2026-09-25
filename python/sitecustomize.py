@@ -20,6 +20,17 @@ import time
 
 _PATH = os.environ.get("LAYA_STATS_FILE")
 
+# Upstream's serve.py caps intra-op threads via LAYA_THREADS but never pins
+# inter-op threads; one forward pass per call means inter-op parallelism has
+# nothing to overlap and defaults waste it (upstream BENCHMARKS.md measured a
+# ~12x regression from this). Set before torch does any parallel work.
+if os.environ.get("LAYA_INTEROP", "1").strip() not in ("0", "false", "no"):
+    try:
+        import torch
+        torch.set_num_interop_threads(1)
+    except BaseException:
+        pass
+
 if _PATH:
     _DAYS_PATH = os.path.join(os.path.dirname(_PATH), "days.json")
     _lock = threading.Lock()
@@ -104,5 +115,22 @@ if _PATH:
     try:
         from laya.hooks import add_default_hook
         add_default_hook(_StatsHook())
+    except BaseException:
+        pass
+
+# LAYA_FAST=1: run each checkpoint on the TileLang fast path (laya[fast]).
+# Router dispatches `on_load` with ctx.agent after every checkpoint build,
+# including lazy GPU loads, so this also covers eviction reloads.
+if os.environ.get("LAYA_FAST", "").strip().lower() in ("1", "true", "yes", "on"):
+    class _FastHook:
+        def on_load(self, ctx):
+            try:
+                ctx.agent.accelerate()
+            except BaseException:
+                pass
+
+    try:
+        from laya.hooks import add_default_hook
+        add_default_hook(_FastHook())
     except BaseException:
         pass

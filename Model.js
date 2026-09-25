@@ -169,6 +169,7 @@ function moreView(s, ui) {
     { icon: "machine", text: (s.mode || "cpu") + " · :" + s.port },
     { icon: "gpu", text: h.device || "" },
     Array.isArray(h.loaded) ? { icon: "weights", text: h.loaded.length + " checkpoints" } : null,
+    s.layaVersion ? { icon: "version", text: "laya " + s.layaVersion } : null,
     s.autostart ? { icon: "check", text: "autostart" } : null
   ].filter(function(c) { return c && c.text !== "" })
   var v = { back: true, rows: [], hero: { name: "laya", family: "laya", chips: facts, sub: stateLabel(s) } }
@@ -222,6 +223,15 @@ function moreView(s, ui) {
     action: "auto|" + (s.autostart ? "off" : "on"), open: false })
   v.rows.push({ type: "field", icon: "folder", label: "folder", value: home(s.folder), action: "pick|folder", drop: true, open: ui.open === "folder" })
   if (ui.open === "folder") v.rows.push({ type: "path" })
+  // the laya package version and one-click upgrade; tuning lives in <folder>/laya.env
+  var env = s.env || {}, tune = Object.keys(env)
+  v.rows.push({ type: "field", icon: "version", label: "laya", value: (s.layaVersion || "?") + "  ›", action: "pick|laya", open: ui.open === "laya" })
+  if (ui.open === "laya") {
+    v.rows.push({ type: "opt", label: "update from PyPI", value: "uv sync", action: "update" })
+    v.rows.push({ type: "opt", label: "update to upstream main", value: "git", action: "update|git" })
+  }
+  if (tune.length) v.rows.push({ type: "field", icon: "tune", label: "tuning",
+    value: tune.map(function(kk) { return kk.replace("LAYA_", "").toLowerCase() + "=" + env[kk] }).join("  ") })
   v.rows.push({ type: "sec", label: "REACH" })
   v.rows.push({ type: "field", icon: "machine", label: "this machine", value: "127.0.0.1:" + s.port })
   if (ui.problem) v.rows.push({ type: "error", label: ui.problem })
@@ -242,7 +252,7 @@ function homeView(s, ui) {
   var act = activity(s)
   if (act) rows.push(act)
   rows.push(card(s))
-  return { title: "LOCAL LAYA", version: s.version || "", rows: rows }
+  return { title: "LOCAL LAYA", version: (s.layaVersion ? "laya " + s.layaVersion : s.version) || "", rows: rows }
 }
 
 function build(s, ui) {
