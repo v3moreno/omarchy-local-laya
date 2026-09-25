@@ -356,7 +356,14 @@ Panel {
                         dotColor: root.ink
                         dotOpacity: 1
                       }
-                      Label { text: r.name; color: root.ink; font.pixelSize: Style.font.subtitle }
+                      Label { id: runName; text: r.name; color: root.ink; font.pixelSize: Style.font.subtitle }
+                      Label {
+                        visible: !!r.version
+                        anchors.baseline: runName.baseline
+                        text: r.version || ""
+                        color: Util.alpha(root.labelTone, 0.55)
+                        font.pixelSize: Style.font.caption - 2
+                      }
                     }
                     Row {
                       spacing: Style.space(10)

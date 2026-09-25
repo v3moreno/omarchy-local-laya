@@ -16,6 +16,7 @@ function ago(t) {
   return s < 300 ? "now" : s < 3600 ? Math.round(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago"
 }
 function home(dir) { return (dir || "").replace(/^\/home\/[^\/]+/, "~") }
+function up(v) { return (v || "cpu").toUpperCase() }
 
 function parse(text) { try { return JSON.parse(text) } catch (e) { return null } }
 
@@ -78,7 +79,7 @@ function stateLabel(s) {
   if (s.active === "activating") return "starting…"
   if (s.active === "deactivating") return "stopping…"
   if (foreign(s)) return "external laya · pid " + s.portPid
-  if (running(s)) return (s.mode || "cpu") + " · up " + dur(s.uptime)
+  if (running(s)) return up(s.mode) + " · up " + dur(s.uptime)
   return "stopped"
 }
 
@@ -144,9 +145,10 @@ function activity(s) {
 // action (log when it serves, start when it does not) and More
 function card(s) {
   var st = stats(s), h = health(s), series = (st.series || {})
-  var r = { type: "run", name: "laya", family: "laya", line: series.v || [], more: "more",
-    gpu: (s.mode || "cpu") + " mode · :" + s.port,
-    mem: Array.isArray(h.loaded) ? h.loaded.length + " checkpoints · " + (h.device || "?") : "" }
+  var r = { type: "run", name: "Laya", family: "laya", line: series.v || [], more: "more",
+    version: s.layaVersion || "",
+    gpu: up(s.mode) + " mode · :" + s.port,
+    mem: Array.isArray(h.loaded) ? h.loaded.length + " checkpoints · " + up(h.device || "?") : "" }
   if (running(s) || busy(s)) {
     r.chips = [{ icon: "speed", text: ms(p50(st.latencies)) + " p50" },
       { icon: "tokens", text: "Σ " + k((st.input_tokens || 0) + (st.output_tokens || 0)) }].filter(function(c) { return !!c.text })
@@ -166,13 +168,13 @@ function card(s) {
 function moreView(s, ui) {
   var st = stats(s), h = health(s), series = st.series || {}
   var facts = [
-    { icon: "machine", text: (s.mode || "cpu") + " · :" + s.port },
-    { icon: "gpu", text: h.device || "" },
+    { icon: "machine", text: up(s.mode) + " · :" + s.port },
+    { icon: "gpu", text: up(h.device || "") },
     Array.isArray(h.loaded) ? { icon: "weights", text: h.loaded.length + " checkpoints" } : null,
     s.layaVersion ? { icon: "version", text: "laya " + s.layaVersion } : null,
     s.autostart ? { icon: "check", text: "autostart" } : null
   ].filter(function(c) { return c && c.text !== "" })
-  var v = { back: true, rows: [], hero: { name: "laya", family: "laya", chips: facts, sub: stateLabel(s), version: s.layaVersion || "" } }
+  var v = { back: true, rows: [], hero: { name: "Laya", family: "laya", chips: facts, sub: stateLabel(s), version: s.layaVersion || "" } }
   var line = series.v || []
   if (line.length > 1) {
     var top = line[line.length - 1]
@@ -215,9 +217,9 @@ function moreView(s, ui) {
     })
   }
   v.rows.push({ type: "sec", label: "CONTROL" })
-  v.rows.push({ type: "field", icon: "mode", label: "mode", value: s.mode || "cpu", action: "pick|mode", drop: true, open: ui.open === "mode" })
+  v.rows.push({ type: "field", icon: "mode", label: "mode", value: up(s.mode), action: "pick|mode", drop: true, open: ui.open === "mode" })
   if (ui.open === "mode") ["cpu", "gpu"].forEach(function(m) {
-    v.rows.push({ type: "opt", label: m, on: (s.mode || "cpu") === m, action: "mode|" + m })
+    v.rows.push({ type: "opt", label: up(m), on: (s.mode || "cpu") === m, action: "mode|" + m })
   })
   v.rows.push({ type: "field", icon: "check", label: "autostart", value: s.autostart ? "on" : "off",
     action: "auto|" + (s.autostart ? "off" : "on"), open: false })
