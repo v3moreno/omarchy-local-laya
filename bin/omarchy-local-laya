@@ -19,10 +19,10 @@ DEFAULT_FOLDER="$HOME/Projects/local-laya"
 die() { echo "local-laya: $*" >&2; exit 1; }
 
 cfg() { # cfg <path> <default> — missing file/key falls back
-  if [[ -f $CONFIG ]]; then
-    jq -er "$1 // empty" "$CONFIG" 2>/dev/null && return
-  fi
-  printf '%s\n' "$2"
+  local v=""
+  [[ -f $CONFIG ]] && v=$(jq -r "$1 // \"\"" "$CONFIG" 2>/dev/null || true)
+  [[ -n $v ]] || v="$2"
+  printf '%s\n' "$v"
 }
 
 mode() { local m; m=$(cfg .mode cpu); [[ $m == gpu ]] && echo gpu || echo cpu; }
@@ -34,7 +34,7 @@ port_for() { [[ $1 == gpu ]] && echo 8124 || echo 8123; }
 port() {
   local f; f=$(folder)
   local p
-  p=$(sed -n 's/^ *LAYA_PORT *= *\([0-9][0-9]*\).*/\1/p' "$f/laya.env" 2>/dev/null | head -1)
+  p=$(sed -n 's/^ *LAYA_PORT *= *\([0-9][0-9]*\).*/\1/p' "$f/laya.env" 2>/dev/null | head -1 || true)
   if [[ -n $p ]]; then echo "$p"; else port_for "$(mode)"; fi
 }
 
@@ -76,7 +76,7 @@ EOF
 active() { systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true; }
 
 # PID listening on a TCP port (empty when free or owned by another user).
-port_pid() { ss -H -tlnp "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1; }
+port_pid() { ss -H -tlnp "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true; }
 
 is_laya_pid() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'laya'; }
 
