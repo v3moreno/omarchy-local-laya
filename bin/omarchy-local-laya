@@ -97,17 +97,29 @@ active() { systemctl --user is-active "$UNIT_NAME" 2>/dev/null || true; }
 # PID listening on a TCP port (empty when free or owned by another user).
 port_pid() { ss -H -tlnp "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true; }
 
-# A pid counts as ours when its cmdline mentions laya, or it runs from the
-# configured folder *as the daemon* — `python -m serve`/`serve.py` there names
-# no laya in argv. An unrelated process that merely runs in that folder is not
-# ours to kill.
+# A pid counts as ours only when its argv is the daemon, matched as exact
+# NUL-separated tokens — never substrings, so a path that merely contains
+# "laya" (e.g. ~/Projects/local-laya/dev-server.py) or a near-miss module
+# (`-m server`) is refused. The laya-named entry points (the laya-serve
+# launcher, `-m laya.serve`) are unambiguous wherever they run; the generic
+# `serve`/`serve.py` names count only from the configured folder.
 is_laya_pid() {
-  local cmd cwd
-  cmd=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
-  [[ $cmd == *laya* ]] && return 0
-  cwd=$(readlink "/proc/$1/cwd" 2>/dev/null) || return 1
-  [[ $cwd == "$(folder)" ]] || return 1
-  [[ $cmd == *serve.py* || $cmd == *'-m serve'* || $cmd == *'laya.serve'* ]]
+  local -a av
+  mapfile -d '' -t av < "/proc/$1/cmdline" 2>/dev/null || return 1
+  ((${#av[@]})) || return 1
+  local i base own=false
+  [[ $(readlink "/proc/$1/cwd" 2>/dev/null) == "$(folder)" ]] && own=true
+  for i in "${!av[@]}"; do
+    base=${av[i]##*/}
+    case $base in
+      laya-serve|laya-serve.py) return 0 ;;
+      serve.py)   [[ $own == true ]] && return 0 ;;
+      serve|laya.serve)
+        (( i > 0 )) && [[ ${av[i-1]} == -m ]] || continue
+        [[ $base == laya.serve || $own == true ]] && return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # Kill a laya process squatting on our port (e.g. a manually-run laya-serve).
