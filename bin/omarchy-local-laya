@@ -201,8 +201,8 @@ snapshot() {
     # output plainly data, never a command substitution a scanner could
     # mistake for download-and-execute
     local htmp; htmp=$(mktemp) || htmp=
-    if [[ -n $htmp ]] && curl -fsS -m 2 -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
-      health=$(cat "$htmp" 2>/dev/null || echo null)
+    if [[ -n $htmp ]] && curl -fsS -m 2 --max-filesize 65536 -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
+      health=$(head -c 65536 "$htmp" 2>/dev/null || echo null)
       [[ -z $health ]] && health=null
     fi
     [[ -n $htmp ]] && rm -f "$htmp"
