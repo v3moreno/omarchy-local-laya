@@ -124,13 +124,14 @@ def is_doc_path(path, cwd):
     p = Path(path)
     if not p.is_absolute():
         p = Path(cwd) / p
-    try:
-        rel = p.resolve().relative_to(Path(cwd).resolve())
-    except Exception:
+    # lexical rel (normpath, not resolve): a symlinked doc stays gated by its
+    # spelled path instead of escaping the gate via its target
+    rel = os.path.normpath(os.path.relpath(p, cwd))
+    if rel == ".." or rel.startswith(".." + os.sep) or os.path.isabs(rel):
         return False  # outside cwd -> not our gate
     if p.suffix.lower() not in DOC_EXT:
         return False
-    return not DOCS_DIR or str(rel).startswith(DOCS_DIR.rstrip("/"))
+    return not DOCS_DIR or rel == DOCS_DIR or rel.startswith(DOCS_DIR.rstrip("/") + os.sep)
 
 # ---------- handlers ----------
 

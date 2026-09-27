@@ -72,8 +72,11 @@ def _post(path, body):
 
 
 def _read(path):
+    # regular files only: opening a fifo/device could block the server forever
+    if not os.path.isfile(path):
+        raise OSError("not a regular file")
     with open(path, encoding="utf-8", errors="replace") as fh:
-        return f"file: {os.path.basename(path)}\n\n" + fh.read()[:4000]
+        return f"file: {os.path.basename(path)}\n\n" + fh.read(4000)
 
 
 def _expand(files):

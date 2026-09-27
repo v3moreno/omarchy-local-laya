@@ -118,11 +118,17 @@ def create_app():
 
 
 def main() -> None:
+    import sys
+
     import uvicorn
 
+    host = os.environ.get("LAYA_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "::1", "localhost") and not os.environ.get("LAYA_API_KEY"):
+        print(f"local-laya: serving {host} with no LAYA_API_KEY — the API is unauthenticated",
+              file=sys.stderr)
     uvicorn.run(
         create_app(),
-        host=os.environ.get("LAYA_HOST", "0.0.0.0"),
+        host=host,
         port=int(os.environ.get("LAYA_PORT", "8123")),
         log_level=os.environ.get("LAYA_LOG_LEVEL", "info"),
     )
