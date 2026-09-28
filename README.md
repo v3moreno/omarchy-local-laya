@@ -84,7 +84,8 @@ the `laya_*` tools.
   `omarchy-local-laya install` — it creates a venv, installs `laya[serve]`
   and `mcp` (uv when present, pip otherwise) and drops the bundled
   tooling (`laya-serve`, `serve.py`, `laya-mcp.py`, `laya-gate.py`,
-  `laya-mcp-install`) in place. Existing files are never overwritten,
+  `laya-mcp-install`, and `shared.json` — the questions and thresholds
+  the gate and MCP proxy share) in place. Existing files are never overwritten,
   so a real checkout keeps its own copies.
 - **Agent wiring**: the bundled `laya-serve` runs the extended server
   (`serve.py`, which adds `POST /v1/systemone/batch`), and the

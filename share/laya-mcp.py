@@ -18,31 +18,11 @@ from mcp.server.mcpserver import MCPServer
 
 MAX_FILES = 64  # the daemon's batch limit
 
-ROUTE_Q = {
-    "task": {"type": "choice", "instructions": "What kind of task is this request?",
-             "criteria": {"email": "reading or replying to an email/message",
-                          "document_search": "find which file/doc contains an answer",
-                          "code": "write, fix or explain code",
-                          "question": "answer a question from knowledge",
-                          "action": "run commands, edit files, operate the machine",
-                          "other": "none of the above"}},
-    "needs_docs": {"type": "noul", "instructions": "Does this request require reading local files or documents?"},
-    "needs_reasoning": {"type": "noul", "instructions": "Does this request require multi-step reasoning or careful analysis?"},
-}
-
-TRIAGE_Q = {
-    "kind": {"type": "choice", "instructions": "What kind of message or document is this?",
-             "criteria": {"invoice_or_billing": "an invoice, charge, payment, refund or billing correction",
-                          "personal": "personal note, plans, recommendations or family",
-                          "booking_or_itinerary": "travel booking, itinerary or tickets",
-                          "notice": "delivery, legal, rent or administrative notice",
-                          "work": "team updates, tasks, oncall or meetings",
-                          "other": "none of the above"}},
-    "urgency": {"type": "score", "instructions": "How urgent is this message?",
-                "criteria": ["no time pressure", "needs attention soon", "blocking issue or hard deadline"]},
-    "needs_reply": {"type": "noul", "instructions": "Does the sender expect a reply?"},
-    "is_spam": {"type": "noul", "instructions": "Is this unsolicited spam, bulk marketing or a scam/phishing attempt?"},
-}
+# questions + thresholds shared with laya-gate.py, the pi extension and ask CLI
+with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "shared.json")) as _fh:
+    SHARED = json.load(_fh)
+ROUTE_Q = SHARED["route"]
+TRIAGE_Q = SHARED["triage"]
 
 
 def _own_listener(port):
@@ -137,8 +117,9 @@ def _expand(files):
 server = MCPServer("laya", instructions=(
     "Laya is a local decision daemon: classification, filtering, ranking and "
     "yes/no scoring in ~20ms with zero generated tokens. RULES: (1) Before "
-    "reading any files under docs/ or deciding which documents to open, call "
-    "laya_filter or laya_triage — never classify documents yourself. "
+    "reading any files under docs/, call laya_filter with the user's question "
+    "— only files it keeps can be read. To say what documents are, call "
+    "laya_triage — never classify documents yourself. "
     "(2) For yes/no or classification questions about text, call laya_yesno "
     "instead of reasoning yourself. (3) For choosing among options, call "
     "laya_pick. These tools are faster and more reliable than doing the "
@@ -166,7 +147,7 @@ def laya_status() -> str:
 
 
 @server.tool(name="laya_route", description=(
-    "Classify a request with the Laya router: task kind + needs_docs/needs_reasoning scores. "
+    "Classify a request with the Laya router: task kind + needs_web/needs_docs/needs_reasoning scores. "
     "Call first on multi-step or document-touching requests."))
 def laya_route(text: str) -> str:
     return json.dumps(_answers(_post("/v1/systemone", {"state": text, "questions": ROUTE_Q}), ROUTE_Q))
@@ -185,15 +166,14 @@ def laya_filter(question: str, files: list) -> str:
     good = [it for it in items if "state" in it]
     if not good:
         return json.dumps({"ranked": items, "read": []})
-    q = {"relevant": {"type": "noul",
-                      "instructions": f"Does this text contain information that helps answer: {question}?"}}
+    q = {"relevant": {"type": "noul", "instructions": SHARED["relevant"].format(question=question)}}
     res = _post("/v1/systemone/batch", {"requests": [{"state": it["state"], "questions": q} for it in good]})
     scores = {it["file"]: _answers(r, q)["relevant"] for it, r in zip(good, _results(res))}
     ranked = sorted(
         ({"file": it["file"], "relevant": scores[it["file"]]} if it["file"] in scores else it for it in items),
         key=lambda x: -(x.get("relevant") or 0))
     return json.dumps({"ranked": ranked,
-                       "read": [x["file"] for x in ranked if (x.get("relevant") or 0) >= 0.5]})
+                       "read": [x["file"] for x in ranked if (x.get("relevant") or 0) >= SHARED["keep"]]})
 
 
 @server.tool(name="laya_triage", description=(

@@ -359,6 +359,9 @@ sync_tools() {
   for s in laya-serve serve.py laya-mcp.py laya-gate.py laya-mcp-install; do
     [[ -e $f/$s ]] || install -m755 "$PLUGIN_DIR/share/$s" "$f/$s" || die "could not copy $s into $f"
   done
+  # questions/thresholds read by laya-gate.py and laya-mcp.py
+  [[ -e $f/shared.json ]] || install -m644 "$PLUGIN_DIR/share/shared.json" "$f/shared.json" \
+    || die "could not copy shared.json into $f"
 }
 
 # Install exactly the hash-locked package set into <folder>/.venv. uv when

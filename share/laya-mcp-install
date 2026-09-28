@@ -64,10 +64,14 @@ install_claude() {
                 + (if $matcher == "" then {} else {matcher: $matcher} end))]
          end);
     .hooks = (.hooks // {})
+    # filter calls are credited after they succeed now — drop the old pre-hook
+    | .hooks.PreToolUse = ((.hooks.PreToolUse // []) | map(select(
+        .matcher != "mcp__laya__.*" or ([.hooks[].command] | any(contains("laya-gate")) | not))))
     | ensure("PreToolUse"; "Read"; "pretool")
     | ensure("PreToolUse"; "Bash"; "pretool")
-    | ensure("PreToolUse"; "mcp__laya__.*"; "pretool")
     | ensure("PostToolUse"; "Read"; "posttool")
+    | ensure("PostToolUse"; "Bash"; "posttool")
+    | ensure("PostToolUse"; "mcp__laya__.*"; "posttool")
     | ensure("UserPromptSubmit"; ""; "prompt")' \
     || { bad "claude: $f is not valid JSON — hooks not installed"; return 1; }
   ok "claude: MCP + hooks in $f"
@@ -129,7 +133,7 @@ install_hermes() {
   # hard enforcement via shell hooks in config.yaml; atomic write via tmp+rename.
   # exit codes: 0 wrote, 3 already configured, 1 error — set -e is off here so
   # the nonzero cases fall through to the case below.
-  python3 - "$PY" "$HERE/laya-gate.py" "$HOME/.hermes/config.yaml" <<'PYEOF'
+  "$PY" - "$PY" "$HERE/laya-gate.py" "$HOME/.hermes/config.yaml" <<'PYEOF'
 import os, sys, yaml
 py, gate, f = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
@@ -146,18 +150,18 @@ for ev in ("pre_tool_call", "post_tool_call", "pre_llm_call"):
     if not isinstance(v, list):
         raise SystemExit(f"hooks.{ev} is not a list — not touching it")
 before = yaml.dump(hooks, sort_keys=False)
-def has(event, cmd):
-    return any(cmd in (h.get("command") or "") for h in hooks[event])
 G = f"{py} {gate}"
-if not has("pre_tool_call", G):
-    hooks["pre_tool_call"] += [
-        {"matcher": "read_file|terminal", "command": f"{G} pretool hermes", "timeout": 20},
-        {"matcher": "laya", "command": f"{G} pretool hermes", "timeout": 10}]
-if not has("post_tool_call", G):
-    hooks["post_tool_call"].append(
-        {"matcher": "read_file", "command": f"{G} posttool hermes", "timeout": 20})
-if not has("pre_llm_call", G):
-    hooks["pre_llm_call"].append({"command": f"{G} prompt hermes", "timeout": 15})
+# hermes matchers are fullmatch regexes; MCP tools are mcp__<server>__<tool>.
+# Replace our own entries wholesale so older installs migrate; others untouched.
+WANT = {
+    "pre_tool_call": [{"matcher": "read_file|terminal", "command": f"{G} pretool hermes", "timeout": 20}],
+    "post_tool_call": [{"matcher": "read_file|terminal|mcp__laya__.*",
+                        "command": f"{G} posttool hermes", "timeout": 20}],
+    "pre_llm_call": [{"command": f"{G} prompt hermes", "timeout": 15}],
+}
+for ev, entries in WANT.items():
+    hooks[ev] = [h for h in hooks[ev]
+                 if not (isinstance(h, dict) and G in (h.get("command") or ""))] + entries
 if yaml.dump(hooks, sort_keys=False) == before:
     raise SystemExit(3)  # nothing added — don't reformat the user's yaml
 tmp = f + ".tmp"
@@ -167,7 +171,7 @@ PYEOF
   case $? in
     0) ok "hermes: MCP + hooks in ~/.hermes/config.yaml (approve them in hermes on first use)" ;;
     3) skip "hermes: hooks already configured" ;;
-    *) bad "hermes: hooks not written (needs pyyaml in system python3)" ;;
+    *) bad "hermes: hooks not written (needs pyyaml in $PY)" ;;
   esac
 }
 
@@ -177,6 +181,8 @@ install_pi() {
   [[ -f $PI_EXT ]] || { skip "$a: $PI_EXT missing"; return; }
   mkdir -p "$d" || { bad "$a: cannot create $d"; return 1; }
   cp -f "$PI_EXT" "$d/laya.js" || { bad "$a: extension copy failed"; return 1; }
+  # the extension reads its questions from here (pi loads only .js/.ts)
+  cp -f "$HERE/shared.json" "$d/laya-shared.json" || { bad "$a: shared.json copy failed"; return 1; }
   ok "$a: $d/laya.js (native extension — $a has no MCP)"
 }
 
