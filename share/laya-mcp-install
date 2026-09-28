@@ -20,13 +20,16 @@ ok()   { printf '  ok %s\n' "$1"; }
 skip() { printf '  -  %s\n' "$1"; }
 bad()  { printf '  !! %s\n' "$1"; }
 
-# jwrite <file> <jq args...> — write jq output via tmp + rename so a jq or IO
+# jwrite <file> <jq args...> — write jq output via mktemp + rename so a jq or IO
 # failure never leaves a truncated config. Caller handles the nonzero return.
 jwrite() {
   local f=$1; shift
   command -v jq >/dev/null || { bad "jq not installed"; return 1; }
-  jq "$@" "$f" >"$f.tmp.$$" 2>/dev/null || { rm -f "$f.tmp.$$"; return 1; }
-  mv "$f.tmp.$$" "$f"
+  # mktemp: random name created O_EXCL — a planted symlink can't redirect the write
+  local tmp; tmp=$(mktemp "$f.XXXXXX") || return 1
+  jq "$@" "$f" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  chmod --reference="$f" "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$f"
 }
 
 install_codex() {
@@ -134,7 +137,7 @@ install_hermes() {
   # exit codes: 0 wrote, 3 already configured, 1 error — set -e is off here so
   # the nonzero cases fall through to the case below.
   "$PY" - "$PY" "$HERE/laya-gate.py" "$HOME/.hermes/config.yaml" <<'PYEOF'
-import os, sys, yaml
+import os, sys, tempfile, yaml
 py, gate, f = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     cfg = yaml.safe_load(open(f)) or {}
@@ -164,9 +167,20 @@ for ev, entries in WANT.items():
                  if not (isinstance(h, dict) and G in (h.get("command") or ""))] + entries
 if yaml.dump(hooks, sort_keys=False) == before:
     raise SystemExit(3)  # nothing added — don't reformat the user's yaml
-tmp = f + ".tmp"
-open(tmp, "w").write(yaml.dump(cfg, sort_keys=False))
-os.replace(tmp, f)
+# mkstemp: random name created O_EXCL in the target dir — never follows a
+# planted symlink; keep the config's mode, then rename over it atomically
+fd, tmp = tempfile.mkstemp(prefix=".config.yaml.", dir=os.path.dirname(f) or ".")
+try:
+    with os.fdopen(fd, "w") as fh:
+        fh.write(yaml.dump(cfg, sort_keys=False))
+    try:
+        os.chmod(tmp, os.stat(f).st_mode & 0o7777)
+    except OSError:
+        pass
+    os.replace(tmp, f)
+except BaseException:
+    os.unlink(tmp)
+    raise
 PYEOF
   case $? in
     0) ok "hermes: MCP + hooks in ~/.hermes/config.yaml (approve them in hermes on first use)" ;;
