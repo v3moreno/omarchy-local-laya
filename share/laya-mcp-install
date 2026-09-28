@@ -32,6 +32,31 @@ jwrite() {
   mv -f "$tmp" "$f"
 }
 
+# jq: append a laya-gate hook entry ({matcher?, hooks:[{type,command}]}) per
+# event+matcher only where none exists — never clobber the user's hooks.
+# Shared by claude and gemini, whose settings use the same hook shape.
+ENSURE_JQ='
+  def ensure($ev; $matcher; $mode):
+    .hooks[$ev] = (.hooks[$ev] // []) +
+      (if (.hooks[$ev] // []) | map(($matcher == "" or .matcher == $matcher) and
+          ([.hooks[].command] | any(contains("laya-gate")))) | any
+       then []
+       else [({hooks: [{type: "command", command: ($g + " " + $mode)}]}
+              + (if $matcher == "" then {} else {matcher: $matcher} end))]
+       end);
+'
+
+# mcpjson <agent> <file> <jq path> [extra jq object] — register the stdio
+# proxy under <path>.laya in a JSON config, creating the file if absent
+mcpjson() {
+  local a=$1 f=$2 p=$3 extra=${4:-"{}"}
+  mkdir -p "$(dirname "$f")" || { bad "$a: cannot create $(dirname "$f")"; return 1; }
+  [[ -f $f ]] || echo '{}' >"$f"
+  jq -e "$p.laya" "$f" >/dev/null 2>&1 && return 0
+  jwrite "$f" --arg c "$PY" --arg a "$SRV" "$p.laya = ({command: \$c, args: [\$a]} + $extra)" \
+    || { bad "$a: $f is not valid JSON — MCP not installed"; return 1; }
+}
+
 install_codex() {
   local f=$HOME/.codex/config.toml
   [[ -f $f ]] || { skip "codex: no $f"; return; }
@@ -57,15 +82,7 @@ install_claude() {
   [[ -f $f ]] || echo '{}' >"$f"
   # append a laya-gate hook per event only where none exists — never clobber
   # hooks the user already has
-  jwrite "$f" --arg g "$PY $HERE/laya-gate.py" '
-    def ensure($ev; $matcher; $mode):
-      .hooks[$ev] = (.hooks[$ev] // []) +
-        (if (.hooks[$ev] // []) | map(($matcher == "" or .matcher == $matcher) and
-            ([.hooks[].command] | any(contains("laya-gate")))) | any
-         then []
-         else [({hooks: [{type: "command", command: ($g + " " + $mode)}]}
-                + (if $matcher == "" then {} else {matcher: $matcher} end))]
-         end);
+  jwrite "$f" --arg g "$PY $HERE/laya-gate.py" "$ENSURE_JQ"'
     .hooks = (.hooks // {})
     # filter calls are credited after they succeed now — drop the old pre-hook
     | .hooks.PreToolUse = ((.hooks.PreToolUse // []) | map(select(
@@ -189,15 +206,90 @@ PYEOF
   esac
 }
 
+install_gemini() {
+  command -v gemini >/dev/null || [[ -d $HOME/.gemini ]] || { skip "gemini: not installed"; return; }
+  local f=$HOME/.gemini/settings.json
+  mcpjson gemini "$f" .mcpServers || return 1
+  # gemini hooks: same entry shape as claude; MCP tools are mcp_<server>_<tool>
+  jwrite "$f" --arg g "$PY $HERE/laya-gate.py" "$ENSURE_JQ"'
+    .hooks = (.hooks // {})
+    | ensure("BeforeTool"; "read_file|run_shell_command"; "pretool gemini")
+    | ensure("AfterTool"; "read_file|run_shell_command|mcp_laya_.*"; "posttool gemini")
+    | ensure("BeforeAgent"; ""; "prompt gemini")' \
+    || { bad "gemini: $f is not valid JSON — hooks not installed"; return 1; }
+  ok "gemini: MCP + hooks in $f"
+}
+
+install_cursor() {
+  command -v cursor-agent >/dev/null || [[ -d $HOME/.cursor ]] || { skip "cursor: not installed"; return; }
+  mcpjson cursor "$HOME/.cursor/mcp.json" .mcpServers || return 1
+  # cursor-agent + Cursor IDE share ~/.cursor/hooks.json; our entries are
+  # replaced wholesale so re-runs migrate, other hooks are untouched
+  local f=$HOME/.cursor/hooks.json
+  [[ -f $f ]] || echo '{"version":1,"hooks":{}}' >"$f"
+  jwrite "$f" --arg g "$PY $HERE/laya-gate.py" '
+    def put($ev; $mode):
+      .hooks[$ev] = ((.hooks[$ev] // []) | map(select((.command // "") | contains("laya-gate") | not)))
+                    + [{command: ($g + " " + $mode + " cursor")}];
+    .version = (.version // 1) | .hooks = (.hooks // {})
+    | put("beforeReadFile"; "pretool") | put("beforeShellExecution"; "pretool")
+    | put("postToolUse"; "posttool") | put("beforeSubmitPrompt"; "prompt")' \
+    || { bad "cursor: $f is not valid JSON — hooks not installed"; return 1; }
+  ok "cursor: MCP + hooks in ~/.cursor (cursor-agent and Cursor IDE)"
+}
+
+install_windsurf() {
+  [[ -d $HOME/.codeium/windsurf ]] || { skip "windsurf: not installed"; return; }
+  mcpjson windsurf "$HOME/.codeium/windsurf/mcp_config.json" .mcpServers || return 1
+  ok "windsurf: MCP in ~/.codeium/windsurf/mcp_config.json"
+}
+
+install_zed() {
+  [[ -d $HOME/.config/zed ]] || { skip "zed: not installed"; return; }
+  mcpjson zed "$HOME/.config/zed/settings.json" .context_servers || return 1
+  ok "zed: context server in ~/.config/zed/settings.json"
+}
+
+install_vscode() {
+  [[ -d $HOME/.config/Code/User ]] || { skip "vscode: not installed"; return; }
+  mcpjson vscode "$HOME/.config/Code/User/mcp.json" .servers '{type: "stdio"}' || return 1
+  ok "vscode: MCP in ~/.config/Code/User/mcp.json"
+}
+
 install_omp() { install_pi "$1"; }
 install_pi() {
-  local a=$1 d=$STATE/agents/$a/extensions
+  local a=$1 d n=0
   [[ -f $PI_EXT ]] || { skip "$a: $PI_EXT missing"; return; }
-  mkdir -p "$d" || { bad "$a: cannot create $d"; return 1; }
-  cp -f "$PI_EXT" "$d/laya.js" || { bad "$a: extension copy failed"; return 1; }
-  # the extension reads its questions from here (pi loads only .js/.ts)
-  cp -f "$HERE/shared.json" "$d/laya-shared.json" || { bad "$a: shared.json copy failed"; return 1; }
-  ok "$a: $d/laya.js (native extension — $a has no MCP)"
+  # omarchy-managed agent dir, plus the agent's own ~/.<agent>/agent when present
+  for d in "$STATE/agents/$a/extensions" "$HOME/.$a/agent/extensions"; do
+    [[ $d == "$HOME/.$a/agent/extensions" && ! -d $HOME/.$a/agent ]] && continue
+    mkdir -p "$d" || { bad "$a: cannot create $d"; return 1; }
+    cp -f "$PI_EXT" "$d/laya.js" || { bad "$a: extension copy failed"; return 1; }
+    # the extension reads its questions from here (pi loads only .js/.ts)
+    cp -f "$HERE/shared.json" "$d/laya-shared.json" || { bad "$a: shared.json copy failed"; return 1; }
+    n=$((n + 1))
+  done
+  ok "$a: native extension in $n dir(s) — $a has no MCP"
+}
+
+# the ask-laya skill (prompt-level rules + `ask` CLI) for every agent with a
+# skills dir; symlinked so a pull of ask-laya updates it. A user's own
+# ask-laya/SKILL.md that isn't our symlink is left alone.
+install_skills() {
+  local src=$HERE/../ask-laya/SKILL.md d n=0
+  [[ -f $src ]] || { skip "skills: $src missing"; return; }
+  src=$(realpath "$src")
+  for d in "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode" "$HOME/.hermes" \
+           "$HOME/.agents" "$HOME/.cursor" "$HOME/.gemini" "$HOME/.codeium/windsurf" \
+           "$HOME/.pi/agent" "$HOME/.omp/agent"; do
+    [[ -d $d ]] || continue
+    local t=$d/skills/ask-laya/SKILL.md
+    [[ -e $t && ! -L $t ]] && continue
+    mkdir -p "$d/skills/ask-laya" && ln -sfn "$src" "$t" && n=$((n + 1))
+  done
+  [[ -d $HOME/.local/bin ]] && ! [[ -e $HOME/.local/bin/ask && ! -L $HOME/.local/bin/ask ]] &&
+    ln -sfn "$(realpath "$HERE/../ask-laya/bin/ask")" "$HOME/.local/bin/ask"
+  ok "skills: ask-laya in $n agent skill dirs + ~/.local/bin/ask"
 }
 
 agents=("$@")
@@ -205,7 +297,7 @@ for a in "${agents[@]}"; do
   declare -F "install_$a" >/dev/null || { echo "unknown agent: $a" >&2; exit 2; }
 done
 wanted() { ((${#agents[@]} == 0)) || printf '%s\n' "${agents[@]}" | grep -qx "$1"; }
-for a in claude codex opencode crush grok copilot hermes pi omp; do
+for a in claude codex opencode crush grok copilot hermes gemini cursor windsurf zed vscode pi omp skills; do
   wanted "$a" || continue
   "install_$a" "$a" || true   # failures already reported by bad()
 done

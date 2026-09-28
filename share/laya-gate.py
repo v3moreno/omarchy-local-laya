@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """laya-gate — hook engine enforcing laya use for JSON-stdin/stdout hook APIs.
 
-  laya-gate.py pretool  [claude|hermes|opencode]  # gate doc reads + dangerous bash
-  laya-gate.py posttool [claude|hermes|opencode]  # credit doc-scoring calls, injection screen
-  laya-gate.py prompt   [claude|hermes|opencode]  # route advisory on each user prompt
+  laya-gate.py pretool  [AGENT]  # gate doc reads + dangerous bash
+  laya-gate.py posttool [AGENT]  # credit doc-scoring calls, injection screen
+  laya-gate.py prompt   [AGENT]  # route advisory on each user prompt
+
+AGENT selects the hook dialect: claude (default), hermes, opencode, gemini,
+cursor (cursor: beforeReadFile/beforeShellExecution -> pretool,
+postToolUse -> posttool, beforeSubmitPrompt -> prompt).
 
 Hooks are one-shot processes, so per-session state lives in
 $XDG_STATE_HOME/laya-gate/<session_id>.json: the last user prompt and the
@@ -131,18 +135,26 @@ def prune_states():
 # ---------- event payloads ----------
 # AGENT selects the wire format and the tool names quoted back to the model.
 AGENT = "claude"
+EVENT = "pretool"
 FILTER_TOOL = {"claude": "mcp__laya__laya_filter", "hermes": "mcp__laya__laya_filter",
-               "opencode": "laya_laya_filter"}
+               "opencode": "laya_laya_filter", "gemini": "mcp_laya_laya_filter"}
+# cursor treats an empty/invalid reply as a block, so allows must be explicit
+CURSOR_ALLOW = {"pretool": {"permission": "allow"}, "prompt": {"continue": True}, "posttool": {}}
+GEMINI_EVENT = {"UserPromptSubmit": "BeforeAgent", "PostToolUse": "AfterTool"}
 
 def filter_tool():
     return FILTER_TOOL.get(AGENT, "laya_filter")
 
 def out(obj):
+    if AGENT == "cursor" and not obj:
+        obj = CURSOR_ALLOW.get(EVENT, {})
     print(json.dumps(obj))
 
 def deny(reason):
-    if AGENT == "hermes":
+    if AGENT in ("hermes", "gemini"):
         out({"decision": "block", "reason": reason})
+    elif AGENT == "cursor":
+        out({"permission": "deny", "user_message": reason, "agent_message": reason})
     else:
         out({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                     "permissionDecision": "deny",
@@ -151,12 +163,35 @@ def deny(reason):
 def context(event, text):
     if AGENT == "hermes":
         out({"context": text})
+    elif AGENT == "cursor":
+        # beforeSubmitPrompt can't carry context; postToolUse can
+        out({"additional_context": text} if event == "PostToolUse" else {})
     else:
-        out({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}})
+        out({"hookSpecificOutput": {"hookEventName": GEMINI_EVENT.get(event, event) if AGENT == "gemini" else event,
+                                    "additionalContext": text}})
+
+def normalize(ev):
+    """Map cursor's per-purpose events onto the claude-style shape handlers use."""
+    if AGENT != "cursor" or not isinstance(ev, dict):
+        return ev
+    ev = dict(ev)
+    ev["session_id"] = ev.get("session_id") or ev.get("conversation_id")
+    ev["cwd"] = ev.get("cwd") or (ev.get("workspace_roots") or ["."])[0]
+    hn = ev.get("hook_event_name")
+    if hn == "beforeReadFile":
+        ev["tool_name"], ev["tool_input"] = "Read", {"file_path": ev.get("file_path")}
+    elif hn == "beforeShellExecution":
+        ev["tool_name"], ev["tool_input"] = "Bash", {"command": ev.get("command")}
+    if "tool_output" in ev:
+        ev["tool_response"] = ev["tool_output"]
+    return ev
+
+def target_path(inp):
+    return inp.get("file_path") or inp.get("path") or inp.get("absolute_path") or inp.get("target_file") or ""
 
 # normalize tool names across agents
 TOOL_ALIASES = {"read": "Read", "read_file": "Read", "bash": "Bash", "terminal": "Bash",
-                "shell": "Bash", "grep": "Grep", "glob": "Glob"}
+                "shell": "Bash", "run_shell_command": "Bash", "grep": "Grep", "glob": "Glob"}
 
 def tool_name(ev):
     n = ev.get("tool_name") or ""
@@ -299,7 +334,7 @@ def pretool(ev):
     cwd = ev.get("cwd", ".")
 
     if name == "Read":
-        target = inp.get("file_path") or inp.get("path") or ""
+        target = target_path(inp)
         if is_doc_path(target, cwd):
             st = load_state(ev)
             if not allowed(ev, st, target):
@@ -339,7 +374,7 @@ def posttool(ev):
     # injection screen on doc content only — README/config reads scored
     # 0.86-0.89 false positives when every read and shell output was screened
     cwd = ev.get("cwd", ".")
-    target = inp.get("file_path") or inp.get("path") or ""
+    target = target_path(inp)
     doc_out = (name == "Read" and is_doc_path(target, cwd)) or \
         (name == "Bash" and any(is_doc_path(m.group(1), cwd) for m in DOC_READ.finditer(inp.get("command", ""))))
     if doc_out:
@@ -372,10 +407,11 @@ def prompt(ev):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
+    EVENT = sys.argv[1]
     if len(sys.argv) > 2:
         AGENT = sys.argv[2]
     try:
-        event = json.loads(sys.stdin.read() or "{}")
+        event = normalize(json.loads(sys.stdin.read() or "{}"))
     except Exception:
         event = {}
     handler = {"pretool": pretool, "posttool": posttool, "prompt": prompt}[sys.argv[1]]
@@ -395,4 +431,7 @@ if __name__ == "__main__":
                                  "cwd": event.get("cwd"), "out": buf.getvalue()[:300]}) + "\n")
         print(buf.getvalue(), end="")
     else:
-        handler(event)
+        try:
+            handler(event)
+        except Exception:
+            out({})  # fail open — cursor would read silence as a block

@@ -94,7 +94,10 @@ the `laya_*` tools.
   `laya_yesno`, `laya_pick`, `laya_decide`) and installs the `laya-gate`
   hooks where the agent supports them. The More page's **AGENTS**
   section shows which of Claude, Codex, OpenCode, Copilot, Hermes,
-  Crush, Pi and OMP are wired.
+  Crush, Grok, Gemini, Cursor, Windsurf, Zed, VS Code, Pi and OMP are
+  wired (hooks on Claude, Hermes, OpenCode, Gemini and Cursor; MCP only
+  on the rest). It also links the ask-laya skill into each agent's
+  skills dir when an ask-laya checkout sits next to the folder.
 - **Updates**: `update` reinstalls the locked package set — the same
   hash-checked install `install` does.
 - **Request stats**: the unit puts the plugin's `python/` on `PYTHONPATH`,

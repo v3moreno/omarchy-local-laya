@@ -222,7 +222,8 @@ function moreView(s, ui) {
   }
   // which agents have the MCP proxy + hooks wired — null when the folder
   // has no MCP tooling (pre-MCP install)
-  var AGENTS = ["claude", "codex", "opencode", "copilot", "hermes", "crush", "pi", "omp"]
+  var AGENTS = ["claude", "codex", "opencode", "copilot", "hermes", "crush", "grok", "gemini",
+                "cursor", "windsurf", "zed", "vscode", "pi", "omp"]
   if (Array.isArray(s.agents)) {
     v.rows.push({ type: "sec", label: "AGENTS" })
     v.rows.push({ type: "field", icon: "check", label: "mcp + hooks",

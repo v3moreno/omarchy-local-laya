@@ -214,7 +214,7 @@ agent_wiring() {
   [[ -f $f/laya-mcp.py && -x $f/laya-mcp-install ]] || { echo null; return; }
   local lai=${OMARCHY_LOCAL_AI_STATE:-$HOME/.local/state/omarchy/local-ai}
   local list="" a
-  for a in claude codex opencode copilot hermes crush pi omp; do
+  for a in claude codex opencode copilot hermes crush grok gemini cursor windsurf zed vscode pi omp; do
     case $a in
       claude)   jq -e '.mcpServers.laya' "$HOME/.claude.json" >/dev/null 2>&1 ;;
       codex)    grep -q '^\[mcp_servers\.laya\]' "$HOME/.codex/config.toml" 2>/dev/null ;;
@@ -222,6 +222,12 @@ agent_wiring() {
       copilot)  jq -e '.mcpServers.laya' "$HOME/.copilot/mcp-config.json" >/dev/null 2>&1 ;;
       hermes)   grep -q laya "$HOME/.hermes/config.yaml" 2>/dev/null ;;
       crush)    jq -e '.mcp.laya' "$lai/agents/crush/crush/crush.json" >/dev/null 2>&1 ;;
+      grok)     grep -qs '^\[mcp_servers\.laya\]\|"laya"' "$lai/agents/grok/config.toml" ;;
+      gemini)   jq -e '.mcpServers.laya' "$HOME/.gemini/settings.json" >/dev/null 2>&1 ;;
+      cursor)   jq -e '.mcpServers.laya' "$HOME/.cursor/mcp.json" >/dev/null 2>&1 ;;
+      windsurf) jq -e '.mcpServers.laya' "$HOME/.codeium/windsurf/mcp_config.json" >/dev/null 2>&1 ;;
+      zed)      jq -e '.context_servers.laya' "$HOME/.config/zed/settings.json" >/dev/null 2>&1 ;;
+      vscode)   jq -e '.servers.laya' "$HOME/.config/Code/User/mcp.json" >/dev/null 2>&1 ;;
       pi|omp)   [[ -f $lai/agents/$a/extensions/laya.js ]] ;;
     esac && list+=",\"$a\""
   done
