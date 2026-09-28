@@ -17,8 +17,6 @@ import sys
 import urllib.request
 from pathlib import Path
 
-URLS = [os.environ["LAYA_URL"]] if os.environ.get("LAYA_URL") else [
-    "http://127.0.0.1:8124", "http://127.0.0.1:8123"]
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "laya-gate"
 DOCS_DIR = os.environ.get("LAYA_GATE_DOCS", "docs")
 DANGER_BLOCK = 0.85
@@ -42,11 +40,49 @@ ROUTE_Q = {
 }
 
 # ---------- laya client ----------
+def _own_listener(port):
+    """True when a TCP listener on 127.0.0.1/::1:<port> belongs to this user —
+    another local user's process squatting the default port must never see
+    our prompts or answer for the daemon."""
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as fh:
+                rows = fh.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            f = row.split()
+            if len(f) > 7 and f[3] == "0A" and int(f[1].rsplit(":", 1)[1], 16) == port \
+                    and int(f[7]) == os.getuid():
+                return True
+    return False
+
+def _urls():
+    # an explicit LAYA_URL is the user's choice; the default ports must be ours
+    if os.environ.get("LAYA_URL"):
+        return [os.environ["LAYA_URL"]]
+    return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
+
+def _answers(result, questions):
+    """Only typed values reach the agent: a choice must be one of the question's
+    criteria keys, a score/noul must be a number. Anything else becomes None,
+    so a misbehaving daemon can't smuggle text into the agent's context."""
+    ans = result.get("answers") if isinstance(result, dict) else None
+    ans = ans if isinstance(ans, dict) else {}
+    out = {}
+    for qid, q in questions.items():
+        a = ans.get(qid)
+        v = a.get("choice", a.get("score", a.get("noul"))) if isinstance(a, dict) else a
+        crit = q.get("criteria") if isinstance(q, dict) else None
+        if isinstance(q, dict) and q.get("type") == "choice":
+            out[qid] = v if isinstance(v, str) and isinstance(crit, dict) and v in crit else None
+        else:
+            out[qid] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    return out
 
 def predict(state, questions, timeout=15):
     body = {"state": state[:12000], "questions": questions}
-    last = None
-    for base in URLS:
+    for base in _urls():
         try:
             req = urllib.request.Request(
                 base + "/v1/systemone", data=json.dumps(body).encode(),
@@ -54,20 +90,13 @@ def predict(state, questions, timeout=15):
                          **({"Authorization": "Bearer " + os.environ["LAYA_API_KEY"]}
                             if os.environ.get("LAYA_API_KEY") else {})})
             return json.load(urllib.request.urlopen(req, timeout=timeout))
-        except Exception as e:
-            last = e
+        except Exception:
+            pass
     return None  # daemon down -> fail open
 
-def slim(result):
-    out = {}
-    for qid, a in (result or {}).get("answers", {}).items():
-        out[qid] = a.get("choice", a.get("score", a.get("noul"))) if isinstance(a, dict) else a
-    return out
-
 def yesno(state, instruction):
-    r = slim(predict(state, {"a": {"type": "noul", "instructions": instruction}}))
-    v = r.get("a")
-    return float(v) if isinstance(v, (int, float)) else 0.0
+    q = {"a": {"type": "noul", "instructions": instruction}}
+    return _answers(predict(state, q), q)["a"] or 0.0
 
 # ---------- state ----------
 
@@ -195,8 +224,9 @@ def posttool(ev):
 
 def prompt(ev):
     text = ev.get("prompt", "")
-    r = slim(predict(text[:2000], ROUTE_Q))
-    if r:
+    res = predict(text[:2000], ROUTE_Q)
+    r = _answers(res, ROUTE_Q)
+    if res is not None and r["task"] is not None:
         context("UserPromptSubmit",
                 f"[laya route] task={r.get('task')} needs_docs={r.get('needs_docs')} "
                 f"needs_reasoning={r.get('needs_reasoning')} — use laya tools for "

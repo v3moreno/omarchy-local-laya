@@ -28,12 +28,13 @@ esac
 export LAYA_HOST="${LAYA_HOST:-127.0.0.1}"
 
 # laya.env is data, not shell: read NAME=value lines by hand so a stray
-# $(...) or newline is inert instead of executed.
+# $(...) or newline is inert instead of executed, and export only LAYA_*
+# names so it can never set PATH, LD_PRELOAD, PYTHONPATH or the like.
 if [ -f laya.env ]; then
-  while IFS='=' read -r k v; do
+  while IFS='=' read -r k v || [[ -n $k ]]; do
     k=${k#"${k%%[![:space:]]*}"}  # ltrim
     k=${k%"${k##*[![:space:]]}"}  # rtrim
-    [[ $k =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && export "$k=$v"
+    [[ $k =~ ^LAYA_[A-Z0-9_]+$ ]] && export "$k=$v"
   done < laya.env
 fi
 

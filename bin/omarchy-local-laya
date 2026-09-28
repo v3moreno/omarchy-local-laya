@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # omarchy:summary=Run the laya decision daemon from a folder, on CPU or GPU, optionally at login
-# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | agents [agent...] | env [LAYA_*=v] | log
+# omarchy:args=snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update | agents [agent...] | env [LAYA_*=v] | log
 #
 # Backend of the Local Laya bar widget. Owns a generated systemd user unit
 # (omarchy-local-laya.service) built from three persisted settings — the
@@ -19,12 +19,12 @@ STATS_FILE="$STATE_DIR/stats.json"
 DEFAULT_FOLDER="$HOME/Projects/local-laya"
 PLUGIN_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
 
-# Dependency pins: each plugin release names the exact daemon packages it was
-# reviewed against, so install/update can never pull newer upstream code than
-# the reviewed commit pairs with. Bump these alongside a plugin release.
-LAYA_SPEC="laya[serve]==0.3.20"
-MCP_SPEC="mcp==2.2.0"
-LAYA_GIT_SHA="4066d5d5fbf08b66c6757ddeedbd797bd7655bc0"
+# The complete daemon package set — laya[serve], mcp and every transitive
+# dependency — pinned with sha256 hashes. install/update install exactly this
+# file in hash-checking mode with source builds disabled, so the venv only ever
+# gets the artifacts this plugin release was reviewed against.
+LOCK="$PLUGIN_DIR/share/requirements.lock"
+SAFE_PATH='^[A-Za-z0-9._/+@-]+$'  # paths we embed in units and agent configs
 
 die() { echo "local-laya: $*" >&2; exit 1; }
 
@@ -103,7 +103,8 @@ write_unit() { # Regenerate the unit from current config; returns its path.
   f=$(folder); m=$(mode); as=$(autostart)
   [[ -d $f ]] || die "folder '$f' does not exist"
   [[ -x $f/laya-serve ]] || die "'$f/laya-serve' is missing or not executable"
-  [[ $f != *[[:space:]%]* ]] || die "folder path contains whitespace or '%' — a systemd unit cannot quote it"
+  [[ $f =~ $SAFE_PATH ]] || die "folder path '$f' has characters a systemd unit cannot carry (allowed: A-Z a-z 0-9 . _ / + @ -)"
+  [[ $PLUGIN_DIR =~ $SAFE_PATH && $STATS_FILE =~ $SAFE_PATH ]] || die "plugin or state path has characters a systemd unit cannot carry"
   mkdir -p "$HOME/.config/systemd/user"
   # Never overwrite a unit we didn't generate, and never discard edits made
   # outside this plugin. Generated units carry X-Omarchy-Gen, a hash of the
@@ -291,7 +292,9 @@ snapshot() {
   if [[ -f $f/laya.env ]]; then
     envs=$(sed -n 's/^ *\(LAYA_[A-Z_]*\) *=\(.*\)/\1\t\2/p' "$f/laya.env" 2>/dev/null \
       | jq -Rn '[inputs | split("\t") | {key: (.[0] | sub(" *$"; "")), value: .[1]}]
-                | from_entries' 2>/dev/null || echo '{}')
+                | from_entries
+                | with_entries(if (.key | test("KEY|TOKEN|SECRET|PASS")) then .value = "(set)" else . end)' \
+        2>/dev/null || echo '{}')
     [[ -z $envs || $envs == null ]] && envs="{}"
   fi
   jq -nc --arg folder "$f" --arg mode "$m" --arg sub "${sub:-unknown}" \
@@ -321,7 +324,7 @@ cmd_mode() {
 cmd_folder() {
   [[ -n ${1:-} ]] || die "folder <path>"
   local f; f=$(realpath -e "$1" 2>/dev/null) || die "'$1' does not exist"
-  [[ $f != *[[:space:]%]* ]] || die "folder path contains whitespace or '%' — a systemd unit cannot quote it"
+  [[ $f =~ $SAFE_PATH ]] || die "folder path '$f' has characters a systemd unit cannot carry (allowed: A-Z a-z 0-9 . _ / + @ -)"
   [[ -x $f/laya-serve ]] || die "'$f/laya-serve' is missing or not executable"
   write_config "$(mode)" "$f" "$(autostart)"
   write_unit
@@ -358,11 +361,27 @@ sync_tools() {
   done
 }
 
-# Bootstrap laya into the configured folder: venv + laya[serve] + mcp + the
-# laya-serve script and MCP tooling this unit expects. `uv` when present,
-# pip otherwise.
+# Install exactly the hash-locked package set into <folder>/.venv. uv when
+# present, pip otherwise; both refuse any artifact whose sha256 is not in the
+# lock, any unpinned transitive dependency, and any source build (build
+# backends would be fetched outside the lock). Reinstalling every package puts
+# even already-present ones — e.g. from an older, unlocked install — back
+# through the hash check.
+install_locked() {
+  local f=$1
+  [[ -f $LOCK ]] || die "missing $LOCK"
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$f/.venv/bin/python" --require-hashes --no-build --reinstall -r "$LOCK"
+  else
+    "$f/.venv/bin/pip" install --require-hashes --only-binary :all: --force-reinstall -r "$LOCK"
+  fi
+}
+
+# Bootstrap laya into the configured folder: venv + the locked laya[serve] +
+# mcp set + the laya-serve script and MCP tooling this unit expects.
 cmd_install() {
   local f; f=$(folder)
+  [[ $f =~ $SAFE_PATH ]] || die "folder path '$f' has characters a systemd unit cannot carry (allowed: A-Z a-z 0-9 . _ / + @ -)"
   mkdir -p "$f"
   if [[ ! -x $f/.venv/bin/python ]]; then
     if command -v uv >/dev/null 2>&1; then
@@ -371,11 +390,7 @@ cmd_install() {
       python3 -m venv "$f/.venv" || die "venv creation failed"
     fi
   fi
-  if command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$f/.venv/bin/python" "$LAYA_SPEC" "$MCP_SPEC" || die "laya install failed"
-  else
-    "$f/.venv/bin/pip" install "$LAYA_SPEC" "$MCP_SPEC" || die "laya install failed"
-  fi
+  install_locked "$f" || die "laya install failed"
   sync_tools "$f"
   write_config "$(mode)" "$f" "$(autostart)"
   write_unit
@@ -392,32 +407,13 @@ cmd_agents() {
   (cd "$f" && ./laya-mcp-install "$@") 2>&1 | tee "$STATE_DIR/agents.txt"
 }
 
-# Install the pinned laya into the folder's venv. `update` restores the
-# pinned release — `uv sync` when the folder is a uv project, `uv pip`/`pip`
-# when it is a bare venv from `install`; `update git` installs the pinned
-# upstream commit.
+# Restore the locked package set in the folder's venv (the same install as
+# `install`), refresh any missing tooling, and restart a running daemon.
 cmd_update() {
   local f; f=$(folder)
-  [[ -d $f ]] || die "folder '$f' does not exist — run 'install' first"
+  [[ -x $f/.venv/bin/python ]] || die "no venv in '$f' — run 'install' first"
   local before; before=$(laya_version "$f")
-  if [[ ${1:-} == git ]]; then
-    (cd "$f" && uv pip install --python .venv/bin/python \
-      "git+https://github.com/NandhaKishorM/laya@$LAYA_GIT_SHA") || die "git install failed"
-  elif [[ -f $f/pyproject.toml ]]; then
-    (cd "$f" && uv sync) || die "uv sync failed"
-  elif command -v uv >/dev/null 2>&1; then
-    uv pip install --python "$f/.venv/bin/python" "$LAYA_SPEC" || die "upgrade failed"
-  else
-    "$f/.venv/bin/pip" install "$LAYA_SPEC" || die "upgrade failed"
-  fi
-  # The MCP proxy needs `mcp` in the venv; project syncs don't pull it in
-  # unless the folder declares it. Folders installed before share/ carried
-  # the MCP tooling also get the new scripts here.
-  if [[ -x $f/.venv/bin/python ]]; then
-    "$f/.venv/bin/python" -c 'import mcp' 2>/dev/null \
-      || uv pip install --python "$f/.venv/bin/python" "$MCP_SPEC" 2>/dev/null \
-      || "$f/.venv/bin/pip" install "$MCP_SPEC" 2>/dev/null || true
-  fi
+  install_locked "$f" || die "update failed"
   sync_tools "$f"
   local after; after=$(laya_version "$f")
   echo "local-laya: laya ${before:-?} -> ${after:-?}"
@@ -431,7 +427,8 @@ laya_version() {
   [[ -n $meta ]] && sed -n 's/^Version: *//p' "$meta" | head -1
 }
 
-# get/set a LAYA_* key in <folder>/laya.env
+# get/set a LAYA_* key in <folder>/laya.env. Values are one line of data:
+# the file is rewritten via temp + rename, never through sed or a shell.
 cmd_env() {
   local f; f=$(folder)
   local envf="$f/laya.env"
@@ -439,24 +436,22 @@ cmd_env() {
     [[ -f $envf ]] && cat "$envf" || true
     return 0
   fi
-  if [[ $1 == *=* ]]; then
-    local key="${1%%=*}" val="${1#*=}"
-    [[ $key =~ ^LAYA_[A-Z_]+$ ]] || die "env key must be LAYA_*"
-    touch "$envf"
-    if grep -q "^ *${key}=" "$envf"; then
-      sed -i "s|^ *${key}=.*|${key}=${val}|" "$envf"
-    else
-      echo "${key}=${val}" >> "$envf"
-    fi
-    echo "local-laya: $key=$val (applies on next start)"
-    if [[ $(active) == active ]]; then
-      echo "local-laya: restarting to apply"
-      systemctl --user restart "$UNIT_NAME"
-    fi
+  local key="${1%%=*}"
+  [[ $key =~ ^LAYA_[A-Z0-9_]+$ ]] || die "env key must be LAYA_*"
+  if [[ $1 != *=* ]]; then  # bare key: print current value
+    sed -n "s/^ *${key} *=//p" "$envf" 2>/dev/null || true
     return 0
   fi
-  # bare key: print current value
-  grep -oP "^ *${1}=\K.*" "$envf" 2>/dev/null || true
+  local val="${1#*=}" tmp
+  [[ $val != *[$'\n\r']* ]] || die "env value must be a single line"
+  tmp=$(mktemp "$f/.laya.env.XXXXXX") || die "mktemp failed"
+  { grep -v "^ *${key} *=" "$envf" 2>/dev/null; printf '%s=%s\n' "$key" "$val"; } > "$tmp" &&
+    mv -f "$tmp" "$envf" || { rm -f "$tmp"; die "failed to write $envf"; }
+  echo "local-laya: $key set (applies on next start)"
+  if [[ $(active) == active ]]; then
+    echo "local-laya: restarting to apply"
+    systemctl --user restart "$UNIT_NAME"
+  fi
 }
 
 case "${1:-}" in
@@ -467,11 +462,11 @@ case "${1:-}" in
   mode)      cmd_mode "${2:-}" ;;
   folder)    cmd_folder "${2:-}" ;;
   autostart) cmd_autostart "${2:-}" ;;
-  update)    cmd_update "${2:-}" ;;
+  update)    cmd_update ;;
   install)   cmd_install ;;
   agents)    shift; cmd_agents "$@" ;;
   env)       shift; cmd_env "$@" ;;
   log)       exec omarchy-launch-tui --app-id=org.omarchy.local-laya-log \
                journalctl --user -fu "$UNIT_NAME" ;;
-  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update [git] | agents [agent...] | env [LAYA_*=v] | log" ;;
+  *)         die "snapshot | start | stop | restart | mode cpu|gpu | folder <path> | autostart on|off | install | update | agents [agent...] | env [LAYA_*=v] | log" ;;
 esac

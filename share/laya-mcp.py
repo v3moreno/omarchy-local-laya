@@ -16,8 +16,7 @@ import urllib.request
 
 from mcp.server.mcpserver import MCPServer
 
-URLS = [os.environ["LAYA_URL"]] if os.environ.get("LAYA_URL") else [
-    "http://127.0.0.1:8124", "http://127.0.0.1:8123"]
+MAX_FILES = 64  # the daemon's batch limit
 
 ROUTE_Q = {
     "task": {"type": "choice", "instructions": "What kind of task is this request?",
@@ -46,19 +45,52 @@ TRIAGE_Q = {
 }
 
 
-def _slim(result):
+def _own_listener(port):
+    """True when a TCP listener on 127.0.0.1/::1:<port> belongs to this user —
+    another local user's process squatting the default port must never see
+    our prompts or answer for the daemon."""
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as fh:
+                rows = fh.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            f = row.split()
+            if len(f) > 7 and f[3] == "0A" and int(f[1].rsplit(":", 1)[1], 16) == port \
+                    and int(f[7]) == os.getuid():
+                return True
+    return False
+
+
+def _urls():
+    # an explicit LAYA_URL is the user's choice; the default ports must be ours
+    if os.environ.get("LAYA_URL"):
+        return [os.environ["LAYA_URL"]]
+    return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
+
+
+def _answers(result, questions):
+    """Only typed values reach the agent: a choice must be one of the question's
+    criteria keys, a score/noul must be a number. Anything else becomes None,
+    so a misbehaving daemon can't smuggle text into the agent's context."""
+    ans = result.get("answers") if isinstance(result, dict) else None
+    ans = ans if isinstance(ans, dict) else {}
     out = {}
-    for qid, a in (result or {}).get("answers", {}).items():
-        if isinstance(a, dict):
-            out[qid] = a.get("choice", a.get("score", a.get("noul", a)))
+    for qid, q in questions.items():
+        a = ans.get(qid)
+        v = a.get("choice", a.get("score", a.get("noul"))) if isinstance(a, dict) else a
+        crit = q.get("criteria") if isinstance(q, dict) else None
+        if isinstance(q, dict) and q.get("type") == "choice":
+            out[qid] = v if isinstance(v, str) and isinstance(crit, dict) and v in crit else None
         else:
-            out[qid] = a
+            out[qid] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
     return out
 
 
 def _post(path, body):
-    last = None
-    for base in URLS:
+    last = OSError("no laya daemon owned by this user on :8124/:8123 (set LAYA_URL to override)")
+    for base in _urls():
         try:
             req = urllib.request.Request(
                 base + path, data=json.dumps(body).encode(),
@@ -69,6 +101,11 @@ def _post(path, body):
         except Exception as e:  # try next daemon
             last = e
     raise last
+
+
+def _results(res):
+    r = res.get("results") if isinstance(res, dict) else None
+    return r if isinstance(r, list) else []
 
 
 def _read(path):
@@ -92,6 +129,8 @@ def _expand(files):
             if h not in seen:
                 seen.add(h)
                 out.append(h)
+                if len(out) >= MAX_FILES:
+                    return out
     return out
 
 
@@ -109,19 +148,28 @@ server = MCPServer("laya", instructions=(
 @server.tool(name="laya_status", description="Check the laya daemon is reachable: device, loaded checkpoints.")
 def laya_status() -> str:
     try:
-        req = urllib.request.Request(URLS[0] + "/health",
+        urls = _urls()
+        if not urls:
+            raise OSError("no laya daemon owned by this user on :8124/:8123")
+        req = urllib.request.Request(urls[0] + "/health",
                                      headers=({"Authorization": "Bearer " + os.environ["LAYA_API_KEY"]}
                                               if os.environ.get("LAYA_API_KEY") else {}))
-        return json.dumps(json.load(urllib.request.urlopen(req, timeout=5)))
+        h = json.load(urllib.request.urlopen(req, timeout=5))
+        h = h if isinstance(h, dict) else {}
+        loaded = h.get("loaded") if isinstance(h.get("loaded"), list) else []
+        # fixed shape, bounded strings: health text never reaches the agent verbatim
+        return json.dumps({"status": "ok" if h.get("status") == "ok" else "unexpected",
+                           "device": str(h.get("device", ""))[:16],
+                           "loaded": [str(m)[:40] for m in loaded[:16]]})
     except Exception as e:
-        return json.dumps({"status": "unreachable", "error": str(e)})
+        return json.dumps({"status": "unreachable", "error": str(e)[:200]})
 
 
 @server.tool(name="laya_route", description=(
     "Classify a request with the Laya router: task kind + needs_docs/needs_reasoning scores. "
     "Call first on multi-step or document-touching requests."))
 def laya_route(text: str) -> str:
-    return json.dumps(_slim(_post("/v1/systemone", {"state": text, "questions": ROUTE_Q})))
+    return json.dumps(_answers(_post("/v1/systemone", {"state": text, "questions": ROUTE_Q}), ROUTE_Q))
 
 
 @server.tool(name="laya_filter", description=(
@@ -137,12 +185,10 @@ def laya_filter(question: str, files: list) -> str:
     good = [it for it in items if "state" in it]
     if not good:
         return json.dumps({"ranked": items, "read": []})
-    res = _post("/v1/systemone/batch", {
-        "requests": [{"state": it["state"],
-                      "questions": {"relevant": {"type": "noul",
-                                    "instructions": f"Does this text contain information that helps answer: {question}?"}}}
-                     for it in good]})
-    scores = {it["file"]: _slim(r).get("relevant") for it, r in zip(good, res["results"])}
+    q = {"relevant": {"type": "noul",
+                      "instructions": f"Does this text contain information that helps answer: {question}?"}}
+    res = _post("/v1/systemone/batch", {"requests": [{"state": it["state"], "questions": q} for it in good]})
+    scores = {it["file"]: _answers(r, q)["relevant"] for it, r in zip(good, _results(res))}
     ranked = sorted(
         ({"file": it["file"], "relevant": scores[it["file"]]} if it["file"] in scores else it for it in items),
         key=lambda x: -(x.get("relevant") or 0))
@@ -163,7 +209,7 @@ def laya_triage(files: list) -> str:
     good = [it for it in items if "state" in it]
     res = _post("/v1/systemone/batch",
                 {"requests": [{"state": it["state"], "questions": TRIAGE_Q} for it in good]}) if good else {"results": []}
-    scores = {it["file"]: _slim(r) for it, r in zip(good, res["results"])}
+    scores = {it["file"]: _answers(r, TRIAGE_Q) for it, r in zip(good, _results(res))}
     return json.dumps([{"file": it["file"], **scores[it["file"]]} if "state" in it else it
                        for it in items])
 
@@ -172,25 +218,25 @@ def laya_triage(files: list) -> str:
     "Yes/no or 0-1 decision about a piece of text: returns a score. "
     "Do not decide such questions yourself."))
 def laya_yesno(state: str, instruction: str) -> str:
-    return json.dumps(_slim(_post("/v1/systemone", {
-        "state": state,
-        "questions": {"answer": {"type": "noul", "instructions": instruction}}})))
+    q = {"answer": {"type": "noul", "instructions": instruction}}
+    return json.dumps(_answers(_post("/v1/systemone", {"state": state, "questions": q}), q))
 
 
 @server.tool(name="laya_pick", description=(
     "Choose the single best option among candidates, in context. Pass option names as a list."))
 def laya_pick(state: str, options: list, instruction: str = "Which option fits best?") -> str:
     criteria = {str(o)[:40]: f"the option: {o}" for o in options}
-    return json.dumps(_slim(_post("/v1/systemone", {
-        "state": state,
-        "questions": {"pick": {"type": "choice", "instructions": instruction, "criteria": criteria}}})))
+    q = {"pick": {"type": "choice", "instructions": instruction, "criteria": criteria}}
+    return json.dumps(_answers(_post("/v1/systemone", {"state": state, "questions": q}), q))
 
 
 @server.tool(name="laya_decide", description=(
     "Escape hatch: arbitrary typed decision. questions is a map of name -> "
     "{type: 'choice'|'score'|'noul', instructions, criteria?}."))
 def laya_decide(state: str, questions: dict) -> str:
-    return json.dumps(_slim(_post("/v1/systemone", {"state": state, "questions": questions})))
+    if not isinstance(questions, dict):
+        return json.dumps({"error": "questions must be an object"})
+    return json.dumps(_answers(_post("/v1/systemone", {"state": state, "questions": questions}), questions))
 
 
 if __name__ == "__main__":

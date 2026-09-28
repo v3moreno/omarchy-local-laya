@@ -94,9 +94,8 @@ the `laya_*` tools.
   hooks where the agent supports them. The More page's **AGENTS**
   section shows which of Claude, Codex, OpenCode, Copilot, Hermes,
   Crush, Pi and OMP are wired.
-- **Updates**: `update` restores the pinned release (`uv sync` for uv
-  projects, `uv pip`/`pip` for bare venvs); `update git` installs the
-  pinned upstream commit.
+- **Updates**: `update` reinstalls the locked package set — the same
+  hash-checked install `install` does.
 - **Request stats**: the unit puts the plugin's `python/` on `PYTHONPATH`,
   so a `sitecustomize` hook accumulates per-session request count, errors,
   input/output tokens, latency (last + p50 of the last 64 calls), a
@@ -133,9 +132,8 @@ omarchy-local-laya start | stop | restart
 omarchy-local-laya mode cpu            # or gpu — restarts if running
 omarchy-local-laya folder ~/code/laya  # must contain an executable laya-serve
 omarchy-local-laya autostart on|off
-omarchy-local-laya install             # venv + laya[serve] + laya-serve into the folder
-omarchy-local-laya update              # restore the pinned laya release
-omarchy-local-laya update git          # install the pinned upstream commit
+omarchy-local-laya install             # venv + locked laya[serve] + mcp + laya-serve into the folder
+omarchy-local-laya update              # reinstall the locked package set
 omarchy-local-laya agents              # wire MCP + hooks into every installed agent
 omarchy-local-laya agents claude       # or a subset — output saved to agents.txt
 omarchy-local-laya env                 # show <folder>/laya.env
@@ -149,8 +147,8 @@ Config persists at `~/.local/state/omarchy/local-laya/config.json`. A
 
 ## Tuning
 
-`laya-serve` sources `<folder>/laya.env`, so any `LAYA_*` variable applies
-(`env` verb edits it):
+`laya-serve` reads `<folder>/laya.env` as `NAME=value` data (never sourced)
+and exports only `LAYA_*` names (`env` verb edits it):
 
 - `LAYA_THREADS` — torch intra-op threads for CPU inference; keep at or
   under physical cores (default here: 8).
@@ -159,8 +157,9 @@ Config persists at `~/.local/state/omarchy/local-laya/config.json`. A
   call, where upstream's own benchmarks measured idle inter-op parallelism
   costing ~12x latency.
 - `LAYA_FAST=1` — runs each checkpoint on the TileLang fast path
-  (`laya[fast]`, GPU only) via an `on_load` hook; needs
-  `uv pip install --python .venv/bin/python "laya[fast]==0.3.20"` in the folder.
+  (GPU only) via an `on_load` hook. It needs the `laya[fast]` extra, which
+  is not in the plugin's lock: installing it is your own choice, outside the
+  hash-checked set; without it the flag is a no-op.
 - `LAYA_CPU_AMP=bf16`, `LAYA_MODELS`, `LAYA_AUTO_TASK`, `LAYA_API_KEY` —
   pass through to `laya.serve` unchanged.
 
@@ -173,13 +172,20 @@ qs ipc -n -p "$OMARCHY_PATH/shell" call v3moreno.local-laya menu
 ## Requirements
 
 `systemctl --user`, `curl`, `jq` and `python3` (or `uv`, preferred). The
-daemon itself comes from PyPI's `laya[serve]==0.3.20` with `mcp==2.2.0`
-(both pinned per plugin release) — `install` fetches them, so no existing
-checkout is required. An existing folder works too: point `folder` at
+daemon itself comes from PyPI: `share/requirements.lock` pins
+`laya[serve]==0.3.20`, `mcp==2.2.0` and every transitive dependency with
+sha256 hashes, and `install`/`update` install exactly that set in
+hash-checking mode with source builds disabled (`uv pip install
+--require-hashes --no-build`, or `pip install --require-hashes
+--only-binary :all:`) — a changed artifact or unlisted dependency aborts
+the install. No existing checkout is required. An existing folder works too: point `folder` at
 anything containing an executable `laya-serve` that takes `cpu`/`gpu`
 (the [local-laya](https://github.com/v3moreno/local-laya) checkout works
 as-is). The daemon's `GET /health` is used unauthenticated on
-`127.0.0.1`.
+`127.0.0.1`. The MCP proxy and gate hooks only talk to a listener on the
+default ports that is owned by your user (or to an explicit `LAYA_URL`),
+and pass on only typed answers — a choice from the question's criteria or
+a number — never free text from the daemon.
 
 ## Uninstall
 

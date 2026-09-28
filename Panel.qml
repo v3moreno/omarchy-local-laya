@@ -103,10 +103,9 @@ Panel {
     case "start": case "stop": case "restart": run([a[0]]); break
     case "mode": run(["mode", a[1]]); nav({ open: "" }); break
     case "auto": run(["autostart", a[1]]); break
-    case "update": run(a[1] ? ["update", a[1]] : ["update"]); break
+    case "update": run(["update"]); break
     case "install": run(["install"]); break
     case "agents": run(["agents"]); nav({ open: "" }); break
-    case "set": run([a[1], a[2]]); nav({ open: "" }); break
     case "more": nav({ view: "more" }); break
     case "home": home(); break
     case "pick": nav({ open: ui.open === a[1] ? "" : a[1] }); break
@@ -578,7 +577,7 @@ Panel {
                     background: Rectangle { color: "transparent"; border.width: 1; border.color: root.ruleTone }
                     onAccepted: {
                       var path = text.indexOf("~") === 0 ? Quickshell.env("HOME") + text.slice(1) : text
-                      root.activate("set|folder|" + path)
+                      root.run(["folder", path]); root.nav({ open: "" })
                     }
                   }
                 }

@@ -248,8 +248,7 @@ function moreView(s, ui) {
   var env = s.env || {}, tune = Object.keys(env)
   v.rows.push({ type: "field", icon: "version", label: "laya", value: (s.layaVersion || "?") + "  ›", action: "pick|laya", open: ui.open === "laya" })
   if (ui.open === "laya") {
-    v.rows.push({ type: "opt", label: "update from PyPI", value: "uv sync", action: "update" })
-    v.rows.push({ type: "opt", label: "update to upstream main", value: "git", action: "update|git" })
+    v.rows.push({ type: "opt", label: "restore locked release", value: "hash-checked", action: "update" })
   }
   if (tune.length) v.rows.push({ type: "field", icon: "tune", label: "tuning",
     value: tune.map(function(kk) { return kk.replace("LAYA_", "").toLowerCase() + "=" + env[kk] }).join("  ") })

@@ -7,6 +7,9 @@
 # failure explicitly with || return.
 set -euo pipefail
 cd "$(dirname "$0")"; HERE=$PWD
+# HERE is spliced into shell hook commands, TOML and YAML below; refuse any
+# path that would need quoting in one of them.
+[[ $HERE =~ ^[A-Za-z0-9._/+@-]+$ ]] || { echo "laya-mcp-install: unsafe folder path '$HERE'" >&2; exit 2; }
 
 PY=$HERE/.venv/bin/python
 SRV=$HERE/laya-mcp.py
@@ -142,7 +145,7 @@ for ev in ("pre_tool_call", "post_tool_call", "pre_llm_call"):
     v = hooks.setdefault(ev, [])
     if not isinstance(v, list):
         raise SystemExit(f"hooks.{ev} is not a list — not touching it")
-before = yaml.dump(hooks, sort_keys=False) + str(cfg.get("hooks_auto_accept"))
+before = yaml.dump(hooks, sort_keys=False)
 def has(event, cmd):
     return any(cmd in (h.get("command") or "") for h in hooks[event])
 G = f"{py} {gate}"
@@ -155,16 +158,14 @@ if not has("post_tool_call", G):
         {"matcher": "read_file", "command": f"{G} posttool hermes", "timeout": 20})
 if not has("pre_llm_call", G):
     hooks["pre_llm_call"].append({"command": f"{G} prompt hermes", "timeout": 15})
-# only enable auto-accept if the user never set it — don't flip a deliberate False
-cfg.setdefault("hooks_auto_accept", True)
-if yaml.dump(hooks, sort_keys=False) + str(cfg.get("hooks_auto_accept")) == before:
+if yaml.dump(hooks, sort_keys=False) == before:
     raise SystemExit(3)  # nothing added — don't reformat the user's yaml
 tmp = f + ".tmp"
 open(tmp, "w").write(yaml.dump(cfg, sort_keys=False))
 os.replace(tmp, f)
 PYEOF
   case $? in
-    0) ok "hermes: MCP + hooks in ~/.hermes/config.yaml" ;;
+    0) ok "hermes: MCP + hooks in ~/.hermes/config.yaml (approve them in hermes on first use)" ;;
     3) skip "hermes: hooks already configured" ;;
     *) bad "hermes: hooks not written (needs pyyaml in system python3)" ;;
   esac
