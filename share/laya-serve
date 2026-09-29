@@ -27,6 +27,15 @@ esac
 
 export LAYA_HOST="${LAYA_HOST:-127.0.0.1}"
 
+# Loopback is reachable by every local user, so the daemon requires a bearer
+# token. When neither the environment nor laya.env provides one, generate it
+# into laya.env (0600) — the MCP proxy and gate read the same file from their
+# own directory, so agents need no extra config.
+if [[ -z ${LAYA_API_KEY:-} ]] && ! grep -qs '^ *LAYA_API_KEY *=' laya.env 2>/dev/null; then
+  (umask 077; printf 'LAYA_API_KEY=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> laya.env)
+fi
+[[ -f laya.env ]] && chmod 600 laya.env
+
 # laya.env is data, not shell: read NAME=value lines by hand so a stray
 # $(...) or newline is inert instead of executed, and export only LAYA_*
 # names so it can never set PATH, LD_PRELOAD, PYTHONPATH or the like.

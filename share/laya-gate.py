@@ -65,6 +65,22 @@ def _urls():
         return [os.environ["LAYA_URL"]]
     return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
 
+def _api_key():
+    # env first; else the laya.env next to this script (laya-serve generates
+    # the key there, 0600, so only this uid can read it back)
+    if os.environ.get("LAYA_API_KEY"):
+        return os.environ["LAYA_API_KEY"]
+    try:
+        env = os.path.join(os.path.dirname(os.path.realpath(__file__)), "laya.env")
+        with open(env) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip() == "LAYA_API_KEY":
+                    return v.strip()
+    except OSError:
+        pass
+    return None
+
 def _answers(result, questions):
     """Only typed values reach the agent: a choice must be one of the question's
     criteria keys, a score/noul must be a number. Anything else becomes None,
@@ -88,8 +104,8 @@ def _post(path, body, timeout=15):
             req = urllib.request.Request(
                 base + path, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json",
-                         **({"Authorization": "Bearer " + os.environ["LAYA_API_KEY"]}
-                            if os.environ.get("LAYA_API_KEY") else {})})
+                         **({"Authorization": "Bearer " + _api_key()}
+                            if _api_key() else {})})
             return json.load(urllib.request.urlopen(req, timeout=timeout))
         except Exception:
             pass
@@ -342,13 +358,15 @@ def pretool(ev):
 
     if name == "Bash":
         cmd = inp.get("command", "")
-        # ask scoring reads docs itself; any other shell doc read is gated
-        if not SCORING_CMD.search(cmd):
-            docs = [m.group(1) for m in DOC_READ.finditer(cmd) if is_doc_path(m.group(1), cwd)]
-            if docs:
-                st = load_state(ev)
-                if not all(allowed(ev, st, d) for d in docs):
-                    return block_doc(ev, st)
+        # ask scoring reads docs itself — but only its own segment is exempt;
+        # `cat docs/x.md && ask relevant q` still gates the cat
+        docs = [m.group(1)
+                for s in SEGMENTS.split(cmd) if not SCORING_CMD.search(s)
+                for m in DOC_READ.finditer(s) if is_doc_path(m.group(1), cwd)]
+        if docs:
+            st = load_state(ev)
+            if not all(allowed(ev, st, d) for d in docs):
+                return block_doc(ev, st)
 
         danger = max_danger(cmd)
         if danger >= S["danger_block"]:
@@ -360,9 +378,14 @@ def posttool(ev):
     name, inp = tool_name(ev), ev.get("tool_input") or {}
     resp = tool_response(ev)
 
-    # a filter call (laya MCP tool or ask CLI) authorizes exactly the docs it kept
+    # a filter call (laya MCP tool or ask CLI) authorizes exactly the docs it
+    # kept. For Bash every segment must be a scoring command — otherwise other
+    # output in the same response could carry a forged {"file","relevant"}
+    # pair and self-authorize a read.
     if re.search(r"laya_(filter|truth)$", name) or \
-            (name == "Bash" and SCORING_CMD.search(inp.get("command", ""))):
+            (name == "Bash" and (lambda segs: bool(segs) and
+                all(SCORING_CMD.search(s) for s in segs))(
+                [s.strip() for s in SEGMENTS.split(inp.get("command", "")) if s.strip()])):
         cwd = ev.get("cwd", ".")
         keep = {norm(f, cwd) for f, s in _scored_files(resp) if s >= S["keep"]}
         if keep:

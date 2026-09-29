@@ -7,7 +7,7 @@ warm daemon on :8123/:8124 instead of loading checkpoints per agent.
     .venv/bin/python laya-mcp.py
 
 Env: LAYA_URL (daemon base URL, else probes :8124 gpu then :8123 cpu),
-     LAYA_API_KEY (bearer token for the daemon).
+     LAYA_API_KEY (bearer token; else read from laya.env next to this script).
 """
 
 import json
@@ -50,6 +50,23 @@ def _urls():
     return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
 
 
+def _api_key():
+    # env first; else the laya.env next to this script (laya-serve generates
+    # the key there, 0600, so only this uid can read it back)
+    if os.environ.get("LAYA_API_KEY"):
+        return os.environ["LAYA_API_KEY"]
+    try:
+        env = os.path.join(os.path.dirname(os.path.realpath(__file__)), "laya.env")
+        with open(env) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip() == "LAYA_API_KEY":
+                    return v.strip()
+    except OSError:
+        pass
+    return None
+
+
 def _answers(result, questions):
     """Only typed values reach the agent: a choice must be one of the question's
     criteria keys, a score/noul must be a number. Anything else becomes None,
@@ -75,8 +92,8 @@ def _post(path, body):
             req = urllib.request.Request(
                 base + path, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json",
-                         **({"Authorization": "Bearer " + os.environ["LAYA_API_KEY"]}
-                            if os.environ.get("LAYA_API_KEY") else {})})
+                         **({"Authorization": "Bearer " + _api_key()}
+                            if _api_key() else {})})
             return json.load(urllib.request.urlopen(req, timeout=30))
         except Exception as e:  # try next daemon
             last = e
@@ -133,8 +150,8 @@ def laya_status() -> str:
         if not urls:
             raise OSError("no laya daemon owned by this user on :8124/:8123")
         req = urllib.request.Request(urls[0] + "/health",
-                                     headers=({"Authorization": "Bearer " + os.environ["LAYA_API_KEY"]}
-                                              if os.environ.get("LAYA_API_KEY") else {}))
+                                     headers=({"Authorization": "Bearer " + _api_key()}
+                                              if _api_key() else {}))
         h = json.load(urllib.request.urlopen(req, timeout=5))
         h = h if isinstance(h, dict) else {}
         loaded = h.get("loaded") if isinstance(h.get("loaded"), list) else []

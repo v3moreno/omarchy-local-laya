@@ -50,8 +50,11 @@ port() {
 
 write_config() { # write_config <mode> <folder> <autostart>
   mkdir -p "$STATE_DIR"
+  [[ -L $CONFIG ]] && die "$CONFIG is a symlink — refusing to write through it"
+  local tmp; tmp=$(mktemp "$STATE_DIR/.config.XXXXXX") || die "mktemp failed"
   jq -nc --arg mode "$1" --arg folder "$2" --argjson autostart "$3" \
-    '{mode: $mode, folder: $folder, autostart: $autostart}' > "$CONFIG"
+    '{mode: $mode, folder: $folder, autostart: $autostart}' > "$tmp" &&
+    mv -f "$tmp" "$CONFIG" || { rm -f "$tmp"; die "failed to write $CONFIG"; }
 }
 
 unit_hash() { # unit_hash <file> — sha256 of content minus any X-Omarchy-Gen lines.
@@ -414,6 +417,7 @@ cmd_install() {
 cmd_agents() {
   local f; f=$(folder)
   [[ -x $f/laya-mcp-install ]] || die "'$f/laya-mcp-install' is missing — run 'install' or sync the tooling"
+  [[ -L $STATE_DIR/agents.txt ]] && die "$STATE_DIR/agents.txt is a symlink — refusing to write through it"
   (cd "$f" && ./laya-mcp-install "$@") 2>&1 | tee "$STATE_DIR/agents.txt"
 }
 
