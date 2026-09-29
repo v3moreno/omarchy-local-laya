@@ -32,13 +32,20 @@ jwrite() {
   mv -f "$tmp" "$f"
 }
 
-# safe_copy <src> <dst> — refuse a symlink or a file not owned by us at the
-# destination (a planted link could redirect the copy into another user's
-# file); mktemp + rename keeps the write atomic. Caller handles nonzero.
+# safe_copy <src> <dst> — refuse a symlink, a non-regular or foreign-owned
+# destination, or an existing file that shows no sign of being ours (byte-
+# identical to the source, or carrying the plugin's signature strings:
+# `laya-gate`, `laya route`, `ask-laya`). A planted link must never redirect
+# the copy and a foreign extension is never clobbered. mktemp+rename keeps
+# the write atomic. Caller handles nonzero.
 safe_copy() {
   local s=$1 f=$2
   [[ ! -L $f ]] || { bad "$f is a symlink — not overwriting"; return 1; }
+  [[ ! -e $f || -f $f ]] || { bad "$f is not a regular file — not overwriting"; return 1; }
   [[ ! -e $f || -O $f ]] || { bad "$f owned by another user — not overwriting"; return 1; }
+  if [[ -e $f ]] && ! cmp -s "$s" "$f" && ! grep -qE 'laya-gate|laya route|ask-laya' "$f" 2>/dev/null; then
+    bad "$f is not this plugin's file — refusing to overwrite (remove it to adopt ours)"; return 1
+  fi
   local tmp; tmp=$(mktemp "$f.XXXXXX") || return 1
   cp "$s" "$tmp" && mv -f "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }

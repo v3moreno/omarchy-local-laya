@@ -265,8 +265,10 @@ snapshot() {
     local htmp; htmp=$(mktemp) || htmp=
     local key=${LAYA_API_KEY:-}
     [[ -n $key ]] || key=$(sed -n 's/^ *LAYA_API_KEY *= *\([0-9A-Za-z_-]*\).*/\1/p' "$f/laya.env" 2>/dev/null | head -1)
-    local -a auth=(); [[ -n $key ]] && auth=(-H "Authorization: Bearer $key")
-    if [[ -n $htmp ]] && curl -fsS -m 2 --max-filesize 65536 "${auth[@]}" -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
+    # the key goes via -K - stdin, never an argv header — argv is world-
+    # readable in /proc/*/cmdline; printf is a builtin, so no process sees it
+    if [[ -n $htmp ]] && { [[ -z $key ]] || printf 'header = "Authorization: Bearer %s"\n' "$key"; } |
+       curl -fsS -m 2 --max-filesize 65536 -K - -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
       health=$(jq -c . "$htmp" 2>/dev/null || echo null)
     fi
     [[ -n $htmp ]] && rm -f "$htmp"
