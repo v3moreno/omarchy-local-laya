@@ -31,6 +31,10 @@ export LAYA_HOST="${LAYA_HOST:-127.0.0.1}"
 # token. When neither the environment nor laya.env provides one, generate it
 # into laya.env (0600) — the MCP proxy and gate read the same file from their
 # own directory, so agents need no extra config.
+# a symlinked laya.env would send the generated key into a foreign file and
+# read back whatever the link target dictates — refuse it outright
+[[ -L laya.env ]] && { echo "laya-serve: laya.env is a symlink — refusing" >&2; exit 1; }
+
 if [[ -z ${LAYA_API_KEY:-} ]] && ! grep -qs '^ *LAYA_API_KEY *=' laya.env 2>/dev/null; then
   (umask 077; printf 'LAYA_API_KEY=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> laya.env)
 fi

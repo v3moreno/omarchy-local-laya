@@ -65,11 +65,16 @@ def _urls():
         return [os.environ["LAYA_URL"]]
     return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
 
-def _api_key():
+def _api_key(base):
     # env first; else the laya.env next to this script (laya-serve generates
-    # the key there, 0600, so only this uid can read it back)
+    # the key there, 0600, so only this uid can read it back). The file key
+    # is for the local daemon only — a remote LAYA_URL must carry its own
+    # LAYA_API_KEY.
     if os.environ.get("LAYA_API_KEY"):
         return os.environ["LAYA_API_KEY"]
+    if not base.startswith(("http://127.0.0.1", "http://[::1]", "http://localhost",
+                          "https://127.0.0.1", "https://[::1]", "https://localhost")):
+        return None
     try:
         env = os.path.join(os.path.dirname(os.path.realpath(__file__)), "laya.env")
         with open(env) as fh:
@@ -104,8 +109,8 @@ def _post(path, body, timeout=15):
             req = urllib.request.Request(
                 base + path, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json",
-                         **({"Authorization": "Bearer " + _api_key()}
-                            if _api_key() else {})})
+                         **({"Authorization": "Bearer " + _api_key(base)}
+                            if _api_key(base) else {})})
             return json.load(urllib.request.urlopen(req, timeout=timeout))
         except Exception:
             pass

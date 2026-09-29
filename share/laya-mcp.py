@@ -50,11 +50,16 @@ def _urls():
     return [f"http://127.0.0.1:{p}" for p in (8124, 8123) if _own_listener(p)]
 
 
-def _api_key():
+def _api_key(base):
     # env first; else the laya.env next to this script (laya-serve generates
-    # the key there, 0600, so only this uid can read it back)
+    # the key there, 0600, so only this uid can read it back). The file key
+    # is for the local daemon only — a remote LAYA_URL must carry its own
+    # LAYA_API_KEY.
     if os.environ.get("LAYA_API_KEY"):
         return os.environ["LAYA_API_KEY"]
+    if not base.startswith(("http://127.0.0.1", "http://[::1]", "http://localhost",
+                          "https://127.0.0.1", "https://[::1]", "https://localhost")):
+        return None
     try:
         env = os.path.join(os.path.dirname(os.path.realpath(__file__)), "laya.env")
         with open(env) as fh:
@@ -92,8 +97,8 @@ def _post(path, body):
             req = urllib.request.Request(
                 base + path, data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json",
-                         **({"Authorization": "Bearer " + _api_key()}
-                            if _api_key() else {})})
+                         **({"Authorization": "Bearer " + _api_key(base)}
+                            if _api_key(base) else {})})
             return json.load(urllib.request.urlopen(req, timeout=30))
         except Exception as e:  # try next daemon
             last = e
@@ -150,8 +155,8 @@ def laya_status() -> str:
         if not urls:
             raise OSError("no laya daemon owned by this user on :8124/:8123")
         req = urllib.request.Request(urls[0] + "/health",
-                                     headers=({"Authorization": "Bearer " + _api_key()}
-                                              if _api_key() else {}))
+                                     headers=({"Authorization": "Bearer " + _api_key(urls[0])}
+                                              if _api_key(urls[0]) else {}))
         h = json.load(urllib.request.urlopen(req, timeout=5))
         h = h if isinstance(h, dict) else {}
         loaded = h.get("loaded") if isinstance(h.get("loaded"), list) else []
