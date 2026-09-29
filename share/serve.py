@@ -61,13 +61,16 @@ def create_app():
         body = await request.json()
         if not isinstance(body, dict) or "questions" not in body:
             raise HTTPException(status_code=400, detail="body must be an object with a 'questions' field")
+        state = body.get("state")
+        if len(state if isinstance(state, str) else str(state)) > MAX_STATE_CHARS:
+            raise HTTPException(status_code=413, detail=f"state too large (> {MAX_STATE_CHARS} chars)")
         if gate is None:
             gate = asyncio.Lock()
         try:
             async with gate:
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(
-                    pool, lambda: router.predict(body.get("state"), body["questions"], model=body.get("model")))
+                    pool, lambda: router.predict(state, body["questions"], model=body.get("model")))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except HTTPException:
