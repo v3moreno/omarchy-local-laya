@@ -260,9 +260,13 @@ snapshot() {
   if [[ $act == active || $ppid != 0 ]]; then
     # fetch the health JSON to a file, then read it — keeps the probe's
     # output plainly data, never a command substitution a scanner could
-    # mistake for download-and-execute
+    # mistake for download-and-execute. /health needs the bearer when the
+    # daemon has one; the key lives in the folder's laya.env (0600)
     local htmp; htmp=$(mktemp) || htmp=
-    if [[ -n $htmp ]] && curl -fsS -m 2 --max-filesize 65536 -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
+    local key=${LAYA_API_KEY:-}
+    [[ -n $key ]] || key=$(sed -n 's/^ *LAYA_API_KEY *= *\([0-9A-Za-z_-]*\).*/\1/p' "$f/laya.env" 2>/dev/null | head -1)
+    local -a auth=(); [[ -n $key ]] && auth=(-H "Authorization: Bearer $key")
+    if [[ -n $htmp ]] && curl -fsS -m 2 --max-filesize 65536 "${auth[@]}" -o "$htmp" "http://127.0.0.1:$pn/health" 2>/dev/null; then
       health=$(jq -c . "$htmp" 2>/dev/null || echo null)
     fi
     [[ -n $htmp ]] && rm -f "$htmp"

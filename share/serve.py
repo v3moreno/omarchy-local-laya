@@ -51,7 +51,8 @@ def create_app():
             raise HTTPException(status_code=401, detail="invalid or missing bearer token")
 
     @app.get("/health")
-    def health() -> Dict[str, Any]:
+    def health(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        check_auth(authorization)  # no-op when no key is configured
         return {"status": "ok", "loaded": router.loaded, "device": os.environ.get("LAYA_DEVICE") or "auto"}
 
     @app.post("/v1/systemone")
